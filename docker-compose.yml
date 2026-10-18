@@ -1,0 +1,80 @@
+# Werkt met `docker compose` (variabelen uit .env) en met een Portainer-stack uit git
+# (variabelen in de stack). Geen relatieve bind mounts en geen env_file nodig.
+#
+# Mosquitto is optioneel (profiel "mosquitto"):
+#   - eigen broker meedraaien:   COMPOSE_PROFILES=mosquitto
+#   - bestaande broker gebruiken: COMPOSE_PROFILES leeg laten en MQTT_HOST=<ip broker> zetten
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    profiles: ["mosquitto"]
+    restart: unless-stopped
+    # Config en wachtwoordbestand worden bij elke start aangemaakt.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mkdir -p /mosquitto/config /mosquitto/data
+        cat > /mosquitto/config/mosquitto.conf <<'CONF'
+        listener 1883
+        allow_anonymous false
+        password_file /mosquitto/data/passwd
+        persistence true
+        persistence_location /mosquitto/data/
+        log_dest stdout
+        log_type error
+        log_type warning
+        log_type notice
+        CONF
+        if [ -z "$$MQTT_PASSWORD" ]; then echo "MQTT_PASSWORD ontbreekt" >&2; exit 1; fi
+        rm -f /mosquitto/data/passwd
+        mosquitto_passwd -c -b /mosquitto/data/passwd "$$MQTT_USER" "$$MQTT_PASSWORD"
+        chown -R mosquitto:mosquitto /mosquitto/data
+        chmod 0700 /mosquitto/data/passwd
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
+    environment:
+      MQTT_USER: ${MQTT_USER:-accesscontrol}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+    ports:
+      - "${MQTT_PUBLISH_PORT:-1883}:1883"     # Tasmota-relaismodules op het LAN
+    volumes:
+      - mosquitto-data:/mosquitto/data
+
+  app:
+    build: ./app
+    image: accesscontrol:latest
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_started
+        required: false      # Docker Compose 2.20+: start ook zonder Mosquitto-profiel
+    environment:
+      TZ: Europe/Brussels
+      CF_ACCESS_TEAM_DOMAIN: ${CF_ACCESS_TEAM_DOMAIN:-}
+      CF_ACCESS_AUD: ${CF_ACCESS_AUD:-}
+      AUTH_DISABLED: ${AUTH_DISABLED:-false}
+      MQTT_HOST: ${MQTT_HOST:-mosquitto}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_USER: ${MQTT_USER-accesscontrol}   # MQTT_USER= (leeg) = broker zonder login
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      SHAREPOINT_CLIENT_SECRET: ${SHAREPOINT_CLIENT_SECRET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    volumes:
+      - app-data:/data
+      # Back-ups: standaard een Docker-volume. Zet BACKUP_DIR op een absoluut pad om naar een map
+      # op de server te schrijven (die map moet schrijfbaar zijn voor uid 10001).
+      - ${BACKUP_DIR:-backups}:/backups
+      # Seriële poorten: /dev doorgeven + toegang tot ttyUSB (188) en ttyACM (166).
+      # Zo kan je de poort kiezen in Configuratie en mag de USB-adapter later ingeplugd worden.
+      - /dev:/dev
+    device_cgroup_rules:
+      - "c 188:* rmw"
+      - "c 166:* rmw"
+
+volumes:
+  mosquitto-data:
+  app-data:
+  backups:

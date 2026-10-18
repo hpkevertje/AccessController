@@ -1,0 +1,13 @@
+.env
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.vscode/
+
+# Map die de koppeling met Claude aanmaakt
+Claude outputs/
+*.bundle
