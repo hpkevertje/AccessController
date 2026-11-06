@@ -1,11 +1,15 @@
-"""Toestellen: 1 toestel = 1 RTU5024 (eigen telefoonnummer) + 1 Tasmota-relais."""
+"""Toestellen: 1 toestel = 1 RTU5024 (eigen telefoonnummer) + 1 relaismodule (Tasmota of Shelly)."""
 from . import db
 
-FIELDS = ("name", "enabled", "serial_port", "baudrate", "tasmota_topic", "on_seconds", "dedupe_seconds")
+FIELDS = ("name", "enabled", "serial_port", "baudrate", "relay_type", "tasmota_topic",
+          "on_seconds", "dedupe_seconds")
 LABELS = {
     "name": "Naam", "enabled": "Actief", "serial_port": "Seriële poort", "baudrate": "Baudrate",
-    "tasmota_topic": "Tasmota-topic", "on_seconds": "Aan-tijd (s)", "dedupe_seconds": "Ontdubbeling (s)",
+    "relay_type": "Type relaismodule", "tasmota_topic": "MQTT-topic / Shelly-ID",
+    "on_seconds": "Aan-tijd (s)", "dedupe_seconds": "Ontdubbeling (s)",
 }
+RELAY_TYPES = ("tasmota", "shelly")
+TOPIC_LABELS = {"tasmota": "Tasmota-topic", "shelly": "Shelly-ID"}
 # PulseTime van Tasmota gaat tot 64900 = 64800 seconden (18 uur).
 RANGES = {"baudrate": (300, 921600), "on_seconds": (1, 64800), "dedupe_seconds": (0, 3600)}
 
@@ -44,9 +48,13 @@ def validate(data: dict, existing_id: int | None = None) -> dict:
         errors.append("Naam is verplicht.")
     out["enabled"] = bool(data.get("enabled", True))
     out["serial_port"] = str(data.get("serial_port") or "").strip()
+    out["relay_type"] = str(data.get("relay_type") or "tasmota").strip().lower()
+    if out["relay_type"] not in RELAY_TYPES:
+        errors.append("Type relaismodule moet tasmota of shelly zijn.")
     out["tasmota_topic"] = str(data.get("tasmota_topic") or "").strip()
+    topic_label = TOPIC_LABELS.get(out["relay_type"], TOPIC_LABELS["tasmota"])
     if not out["tasmota_topic"] or any(c in out["tasmota_topic"] for c in "#+/ "):
-        errors.append("Tasmota-topic is verplicht en mag geen #, +, / of spatie bevatten.")
+        errors.append(f"{topic_label} is verplicht en mag geen #, +, / of spatie bevatten.")
     defaults = {"baudrate": 38400, "on_seconds": 1, "dedupe_seconds": 5}
     for f, (lo, hi) in RANGES.items():
         try:
@@ -67,7 +75,7 @@ def validate(data: dict, existing_id: int | None = None) -> dict:
         dup = db.query_one("SELECT name FROM devices WHERE tasmota_topic=? AND id IS NOT ?",
                            (out["tasmota_topic"], existing_id))
         if dup:
-            errors.append(f"Tasmota-topic '{out['tasmota_topic']}' wordt al gebruikt door {dup['name']}.")
+            errors.append(f"{topic_label} '{out['tasmota_topic']}' wordt al gebruikt door {dup['name']}.")
     if out["enabled"] and out["serial_port"]:
         dup = db.query_one("SELECT name FROM devices WHERE enabled=1 AND serial_port=? AND id IS NOT ?",
                            (out["serial_port"], existing_id))
@@ -89,10 +97,11 @@ def create(data: dict, grant_all, actor: str) -> dict:
     with db.tx() as c:
         order = c.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM devices").fetchone()[0]
         cur = c.execute(
-            """INSERT INTO devices (name, enabled, serial_port, baudrate, tasmota_topic, on_seconds,
-                                    dedupe_seconds, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
-            (d["name"], int(d["enabled"]), d["serial_port"], d["baudrate"], d["tasmota_topic"],
-             d["on_seconds"], d["dedupe_seconds"], order, db.now_iso()))
+            """INSERT INTO devices (name, enabled, serial_port, baudrate, relay_type, tasmota_topic,
+                                    on_seconds, dedupe_seconds, sort_order, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (d["name"], int(d["enabled"]), d["serial_port"], d["baudrate"], d["relay_type"],
+             d["tasmota_topic"], d["on_seconds"], d["dedupe_seconds"], order, db.now_iso()))
         new_id = cur.lastrowid
         n = 0
         if grant_all:
@@ -109,10 +118,10 @@ def update(device_id: int, data: dict, actor: str) -> dict:
     if not old:
         raise KeyError(device_id)
     d = validate({**old, **{k: v for k, v in data.items() if k in FIELDS}}, existing_id=device_id)
-    db.execute("""UPDATE devices SET name=?, enabled=?, serial_port=?, baudrate=?, tasmota_topic=?,
-                  on_seconds=?, dedupe_seconds=? WHERE id=?""",
-               (d["name"], int(d["enabled"]), d["serial_port"], d["baudrate"], d["tasmota_topic"],
-                d["on_seconds"], d["dedupe_seconds"], device_id))
+    db.execute("""UPDATE devices SET name=?, enabled=?, serial_port=?, baudrate=?, relay_type=?,
+                  tasmota_topic=?, on_seconds=?, dedupe_seconds=? WHERE id=?""",
+               (d["name"], int(d["enabled"]), d["serial_port"], d["baudrate"], d["relay_type"],
+                d["tasmota_topic"], d["on_seconds"], d["dedupe_seconds"], device_id))
     new = get(device_id)
     changes = [f"{LABELS[f]}: {old[f]} -> {new[f]}" for f in FIELDS if old[f] != new[f]]
     if changes:

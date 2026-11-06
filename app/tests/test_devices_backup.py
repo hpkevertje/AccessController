@@ -264,3 +264,93 @@ def test_sharepoint_without_secret_fails_cleanly(tmp_path, monkeypatch):
                    site_url="https://contoso.sharepoint.com/sites/IT")
     r = backup.run(cfg, actor="a")
     assert not r["ok"] and r["local"]["ok"] and "SHAREPOINT_CLIENT_SECRET" in r["sharepoint"]["error"]
+
+
+# ---------- Shelly: type relaismodule ----------
+
+def test_device_relay_type_validation():
+    with pytest.raises(devices.DeviceError) as e:
+        devices.create({"name": "X", "relay_type": "anders", "tasmota_topic": "x",
+                        "serial_port": "/dev/x"}, True, "x")
+    assert "Type relaismodule moet tasmota of shelly zijn." in e.value.errors
+
+    s = devices.create({"name": "Shelly", "relay_type": "shelly",
+                        "tasmota_topic": "shelly1g3-d0cf13dde9dc",
+                        "serial_port": "/dev/x-shelly"}, True, "x")
+    assert s["relay_type"] == "shelly"
+
+    with pytest.raises(devices.DeviceError) as e:
+        devices.create({"name": "Shelly 2", "relay_type": "shelly",
+                        "tasmota_topic": "shelly1g3-d0cf13dde9dc",
+                        "serial_port": "/dev/x-shelly2"}, True, "x")
+    assert "Shelly-ID" in " ".join(e.value.errors)
+
+    devices.create({"name": "Tasmota 1", "relay_type": "tasmota", "tasmota_topic": "water",
+                    "serial_port": "/dev/x-t1"}, True, "x")
+    with pytest.raises(devices.DeviceError) as e:
+        devices.create({"name": "Tasmota 2", "relay_type": "tasmota", "tasmota_topic": "water",
+                        "serial_port": "/dev/x-t2"}, True, "x")
+    assert "Tasmota-topic" in " ".join(e.value.errors)
+
+
+def test_device_update_behoudt_relay_type():
+    s = devices.create({"name": "Shelly", "relay_type": "shelly",
+                        "tasmota_topic": "shelly1g3-d0cf13dde9dc",
+                        "serial_port": "/dev/x-shelly"}, True, "x")
+    updated = devices.update(s["id"], {"on_seconds": 60}, "x")
+    assert updated["relay_type"] == "shelly"
+    assert updated["on_seconds"] == 60
+
+
+NO_RELAY_TYPE_SCHEMA = """
+CREATE TABLE members (id INTEGER PRIMARY KEY AUTOINCREMENT, member_no TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+  phone TEXT UNIQUE, note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, category TEXT NOT NULL, device TEXT,
+  device_id INTEGER, actor TEXT, member_no TEXT, member_name TEXT, phone TEXT, result TEXT, reason TEXT, detail TEXT,
+  cmd_id TEXT, confirmed_at TEXT);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE devices (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  enabled INTEGER NOT NULL DEFAULT 1, serial_port TEXT NOT NULL DEFAULT '',
+  baudrate INTEGER NOT NULL DEFAULT 38400, tasmota_topic TEXT NOT NULL UNIQUE,
+  on_seconds INTEGER NOT NULL DEFAULT 1, dedupe_seconds INTEGER NOT NULL DEFAULT 5,
+  sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+"""
+
+
+def make_db_without_relay_type(path):
+    c = sqlite3.connect(path)
+    c.executescript(NO_RELAY_TYPE_SCHEMA)
+    c.execute("INSERT INTO devices (name, enabled, serial_port, baudrate, tasmota_topic, on_seconds, "
+              "dedupe_seconds, sort_order, created_at) VALUES "
+              "('Water', 1, '/dev/x-water', 38400, 'water', 1200, 5, 0, 'x')")
+    c.commit()
+    c.close()
+
+
+def test_migration_adds_relay_type_idempotent(tmp_path):
+    path = str(tmp_path / "zonder-relay-type.db")
+    make_db_without_relay_type(path)
+    db.init(path)
+    devs = devices.list_devices()
+    assert len(devs) == 1 and devs[0]["relay_type"] == "tasmota"
+    db.init(path)
+    devs = devices.list_devices()
+    assert len(devs) == 1 and devs[0]["relay_type"] == "tasmota"
+
+
+def test_restore_database_without_relay_type_gets_tasmota(tmp_path):
+    path = str(tmp_path / "zonder-relay-type.db")
+    make_db_without_relay_type(path)
+    content = open(path, "rb").read()
+    backup.restore(content, cfg_with(tmp_path / "backups"), "a")
+    devs = devices.list_devices()
+    assert len(devs) == 1 and devs[0]["relay_type"] == "tasmota"
+
+
+def test_restore_old_version_sets_relay_type(tmp_path):
+    path = str(tmp_path / "old.db")
+    make_old_db(path)
+    content = open(path, "rb").read()
+    backup.restore(content, cfg_with(tmp_path / "backups"), "a")
+    assert {d["name"]: d["relay_type"] for d in devices.list_devices()} == {
+        "Water": "tasmota", "Poort": "tasmota"}

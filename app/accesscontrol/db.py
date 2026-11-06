@@ -22,13 +22,15 @@ CREATE TABLE IF NOT EXISTS members (
     updated_at    TEXT NOT NULL
 );
 
--- Toestel = 1 RTU (eigen telefoonnummer) + 1 Tasmota-relais.
+-- Toestel = 1 RTU (eigen telefoonnummer) + 1 relaismodule (Tasmota of Shelly 1 Gen3).
+-- tasmota_topic bevat het Tasmota-topic, of bij relay_type 'shelly' het Shelly-ID (MQTT-prefix).
 CREATE TABLE IF NOT EXISTS devices (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL UNIQUE COLLATE NOCASE,
     enabled         INTEGER NOT NULL DEFAULT 1,
     serial_port     TEXT NOT NULL DEFAULT '',
     baudrate        INTEGER NOT NULL DEFAULT 38400,
+    relay_type      TEXT NOT NULL DEFAULT 'tasmota',
     tasmota_topic   TEXT NOT NULL UNIQUE,
     on_seconds      INTEGER NOT NULL DEFAULT 1,
     dedupe_seconds  INTEGER NOT NULL DEFAULT 5,
@@ -206,6 +208,10 @@ def migrate() -> None:
         c = conn()
         if "device_id" not in _columns("events"):
             c.execute("ALTER TABLE events ADD COLUMN device_id INTEGER")
+        # Type relaismodule (tasmota | shelly). Bestaande toestellen zijn Tasmota.
+        # Moet vóór de vroegtijdige return hieronder staan.
+        if "relay_type" not in _columns("devices"):
+            c.execute("ALTER TABLE devices ADD COLUMN relay_type TEXT NOT NULL DEFAULT 'tasmota'")
         cols = _columns("members")
         if "access_water" not in cols:
             return
