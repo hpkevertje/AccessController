@@ -1,4 +1,4 @@
-"""Kern: leest de RTU5024-debuglijn, beslist, schakelt Tasmota-relaismodules via MQTT.
+"""Kern: leest de RTU5024-debuglijn, beslist, schakelt relaismodules (Tasmota of Shelly) via MQTT.
 
 RTU-debuglijn (38400 baud) bij een oproep:
     g_RecPhoneNo:32470123456
@@ -6,8 +6,9 @@ RTU-debuglijn (38400 baud) bij een oproep:
     not this tel.
 Elk blok is een aparte oproep (de RTU hangt zelf op). Elke 'Call Phonenumber'-regel wordt
 beslist en gelogd. Een korte ontdubbeling (standaard 5 s, 0 = uit) vangt dubbele regels op.
+
+De protocollen van de relaismodules staan in relays.py (TasmotaDriver, ShellyDriver).
 """
-import json
 import logging
 import re
 import threading
@@ -19,6 +20,8 @@ import serial
 
 from . import backup, db, devices, members, settings
 from .phone import PhoneError, normalize
+from .relays import ShellyDriver, TasmotaDriver
+from .relays import decode_pulsetime, dur as _dur, encode_pulsetime  # noqa: F401  (ook gebruikt door de tests)
 
 log = logging.getLogger(__name__)
 
@@ -82,8 +85,10 @@ class DeviceState:
         self.last_sms = None       # {"ts", "sender", "text"}
         self.last_call_number = None
         self.sms_pending = None    # SMS die nog binnenkomt
-        self.pulse_pending = False # PulseTime moet nog gezet worden zodra het relais uit is
-        self.pulse_sent = None     # (waarde, tijdstip) laatst verstuurde PulseTime
+        # Instelling van de relaismodule (Tasmota: PulseTime, Shelly: auto-uit) die nog gedaan moet
+        # worden zodra het relais uit is.
+        self.pulse_pending = False
+        self.pulse_sent = None     # (waarde, tijdstip) laatst verstuurde instelling
 
     def as_dict(self):
         return {
@@ -147,6 +152,7 @@ class Engine:
         self.pending: dict[int, list[tuple[str, str, float]]] = {}
         self._poll_soon: dict[int, float] = {}
         self._stop = threading.Event()
+        self.drivers = {drv.type: drv for drv in (TasmotaDriver(self), ShellyDriver(self))}
         for dev_id in self.devices:
             self._init_state(dev_id)
 
@@ -171,7 +177,7 @@ class Engine:
         if with_serial:
             self._start_serial()
         threading.Thread(target=self._housekeeping, daemon=True, name="housekeeping").start()
-        threading.Thread(target=self._poller, daemon=True, name="pulsetime-poller").start()
+        threading.Thread(target=self._poller, daemon=True, name="relay-poller").start()
         threading.Thread(target=self._backup_scheduler, daemon=True, name="backup").start()
 
     def stop(self):
@@ -207,8 +213,9 @@ class Engine:
         for i, d in new.items():
             o = old.get(i)
             if d["enabled"] and (o is None or not o["enabled"] or o["tasmota_topic"] != d["tasmota_topic"]
-                                 or o["on_seconds"] != d["on_seconds"]):
-                self.query_tasmota(i)
+                                 or o["on_seconds"] != d["on_seconds"]
+                                 or o.get("relay_type") != d.get("relay_type")):
+                self.query_relay(i)
 
     def _start_serial(self, only=None):
         for dev_id, d in self.devices.items():
@@ -274,26 +281,31 @@ class Engine:
                 log.exception("housekeeping")
             self._stop.wait(6 * 3600)
 
-    # ---------- MQTT / Tasmota ----------
+    # ---------- MQTT en relaismodules ----------
     #
-    # Per toestel een Tasmota-relaismodule met MQTT-topic <t> (standaard FullTopic %prefix%/%topic%/):
-    #   cmnd/<t>/POWER ON|OFF        schakelen (ON herstart ook PulseTime)
-    #   cmnd/<t>/PulseTime1 <n>      duur instellen; leeg = opvragen (antwoord op stat/<t>/RESULT)
-    #   cmnd/<t>/PowerOnState 0      na stroomuitval altijd uit
-    #   stat/<t>/POWER               relaisstatus na elke wijziging
-    #   tele/<t>/STATE               periodieke status (bevat POWER)
-    #   tele/<t>/LWT                 Online / Offline (retained)
+    # Per toestel een relaismodule, Tasmota of Shelly 1 Gen3 (relay_type). Het protocol zit in de
+    # drivers (relays.py). De engine kent alleen de gemeenschappelijke gebeurtenissen:
+    #   _apply_relay()  het relais is aan of uit (eventueel met resterende tijd)
+    #   _on_online()    de module is online of offline
+
+    def driver_for(self, d: dict):
+        return self.drivers.get(d.get("relay_type") or "tasmota", self.drivers["tasmota"])
 
     def _devices(self):
         for dev_id, d in list(self.devices.items()):
             if d["enabled"] and d["tasmota_topic"]:
                 yield dev_id, d
 
+    def devices_of(self, relay_type: str):
+        """Actieve toestellen met een topic van dit type, voor de drivers."""
+        for dev_id, d in self._devices():
+            if self.driver_for(d).type == relay_type:
+                yield dev_id, d
+
     def _wanted_topics(self) -> set[str]:
         out = set()
         for _, d in self._devices():
-            t = d["tasmota_topic"]
-            out |= {f"stat/{t}/+", f"tele/{t}/LWT", f"tele/{t}/STATE"}
+            out |= self.driver_for(d).topics(d)
         return out
 
     def _sync_subscriptions(self):
@@ -316,27 +328,13 @@ class Engine:
             return f"MQTT-fout {info.rc}"
         return ""
 
-    def query_tasmota(self, dev_id: int):
-        """Vraagt PulseTime, PowerOnState en relaisstatus op. Instellen gebeurt pas bij het antwoord,
-        en alleen als de waarde verschilt (PulseTime nooit terwijl het relais aan is)."""
+    def query_relay(self, dev_id: int):
+        """Vraagt de status en de instellingen van de relaismodule op. Instellen gebeurt pas bij het
+        antwoord, en alleen als de waarde verschilt (nooit terwijl het relais aan is)."""
         d = self.devices.get(dev_id)
         if not d or not d["enabled"] or not d["tasmota_topic"]:
             return
-        t = d["tasmota_topic"]
-        self._publish(f"cmnd/{t}/PulseTime1", "")
-        self._publish(f"cmnd/{t}/PowerOnState", "")
-        self._publish(f"cmnd/{t}/POWER", "")
-
-    def _set_pulsetime(self, dev_id: int, d: dict):
-        st = self.state[dev_id]
-        st.pulse_pending = False
-        value = encode_pulsetime(d["on_seconds"])
-        if st.pulse_sent and st.pulse_sent[0] == value and time.time() - st.pulse_sent[1] < 15:
-            return                                  # net al verstuurd (dubbel antwoord op een vraag)
-        st.pulse_sent = (value, time.time())
-        self._publish(f"cmnd/{d['tasmota_topic']}/PulseTime1", str(encode_pulsetime(d["on_seconds"])))
-        db.log_event("systeem", device=d, result="info", reason="PulseTime ingesteld op de relaismodule",
-                     detail=f"{_dur(d['on_seconds'])} (PulseTime1 {encode_pulsetime(d['on_seconds'])})")
+        self.driver_for(d).query(dev_id, d)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code.is_failure:
@@ -353,65 +351,39 @@ class Engine:
             self.mqtt_error = str(reason_code)
 
     def _on_message(self, client, userdata, msg):
-        try:
-            payload = msg.payload.decode("utf-8", "replace").strip()
-            for dev_id, d in self._devices():
-                t = d["tasmota_topic"]
-                if msg.topic == f"tele/{t}/LWT":
-                    self._on_lwt(dev_id, d, payload)
-                elif msg.topic in (f"stat/{t}/POWER", f"stat/{t}/POWER1"):
-                    self._on_power(dev_id, d, payload)
-                elif msg.topic == f"tele/{t}/STATE":
-                    data = json.loads(payload or "{}")
-                    p = data.get("POWER", data.get("POWER1"))
-                    if p:
-                        self._on_power(dev_id, d, p)
-                elif msg.topic == f"stat/{t}/RESULT":
-                    self._on_result(dev_id, d, json.loads(payload or "{}"))
-        except Exception:  # noqa: BLE001
-            log.exception("MQTT-bericht %s", msg.topic)
+        payload = msg.payload.decode("utf-8", "replace").strip()
+        for driver in self.drivers.values():
+            try:
+                driver.on_message(msg.topic, payload)
+            except Exception:  # noqa: BLE001
+                log.exception("MQTT-bericht %s", msg.topic)
 
-    def _on_result(self, dev_id, d, data):
+    def _on_online(self, dev_id, d, new):
+        """new: 'online', 'offline' of 'onbekend'."""
         st = self.state[dev_id]
-        pt = data.get("PulseTime1")
-        if isinstance(pt, dict):
-            if "Remaining" in pt:
-                rem = decode_pulsetime(int(pt["Remaining"]))
-                if st.relay == "on" and rem > 0:
-                    st.relay_until = time.time() + rem
-            if "Set" in pt and int(pt["Set"]) != encode_pulsetime(d["on_seconds"]):
-                if st.relay == "on":
-                    st.pulse_pending = True       # niet onderbreken: pas instellen als het relais uit is
-                else:
-                    self._set_pulsetime(dev_id, d)
-        if "PowerOnState" in data and str(data["PowerOnState"]) != "0":
-            self._publish(f"cmnd/{d['tasmota_topic']}/PowerOnState", "0")
-
-    def _on_lwt(self, dev_id, d, payload):
-        st = self.state[dev_id]
-        new = payload.lower() if payload.lower() in ("online", "offline") else "onbekend"
         if new != st.esp and st.esp != "onbekend":
             db.log_event("systeem", device=d, result="info", reason=f"Relaismodule {new}")
         st.esp = new
         if new == "online":
-            self.query_tasmota(dev_id)
+            self.query_relay(dev_id)
 
-    def _on_power(self, dev_id, d, payload):
-        relay = {"ON": "on", "OFF": "off"}.get(payload.strip().upper())
-        if not relay:
-            return
+    def _apply_relay(self, dev_id, d, relay, remaining=None, from_poll=False):
+        """De relaismodule meldt 'on' of 'off'. remaining = resterende seconden als de module die kent.
+        from_poll: antwoord op een eigen opvraging (dan niet meteen opnieuw opvragen)."""
         st = self.state[dev_id]
         prev = st.relay
         st.relay = relay
         now = time.time()
         if relay == "on":
-            if prev != "on" or not st.relay_until:
+            if remaining is not None and remaining > 0:
+                st.relay_until = now + remaining
+            elif prev != "on" or not st.relay_until:
                 st.relay_until = now + d["on_seconds"]
-            self._poll_soon[dev_id] = now + 1
+            if not from_poll:
+                self._poll_soon[dev_id] = now + 1
         else:
             st.relay_until = None
-            if st.pulse_pending:
-                self._set_pulsetime(dev_id, d)
+            self.driver_for(d).on_relay_off(dev_id, d)
         # Commando's bevestigen die op deze toestand wachten.
         with self.lock:
             keep = []
@@ -428,28 +400,35 @@ class Engine:
             db.log_event("systeem", device=d, result="info", reason="Relais uit")
 
     def _poller(self):
-        """Vraagt elke 10 s de resterende PulseTime op zolang een relais aan is."""
+        """Vraagt elke 10 s de resterende tijd op zolang een relais aan is."""
         while not self._stop.is_set():
             now = time.time()
             for dev_id, d in list(self._devices()):
-                st = self.state[dev_id]
-                due = self._poll_soon.get(dev_id)
-                if st.relay == "on" and (due is None or now >= due):
-                    self._publish(f"cmnd/{d['tasmota_topic']}/PulseTime1", "")
-                    self._poll_soon[dev_id] = now + 10
+                try:
+                    st = self.state[dev_id]
+                    due = self._poll_soon.get(dev_id)
+                    if st.relay == "on" and (due is None or now >= due):
+                        self.driver_for(d).poll(dev_id, d)
+                        self._poll_soon[dev_id] = now + 10
+                except Exception:  # noqa: BLE001
+                    log.exception("poller %s", dev_id)
             self._stop.wait(1)
 
     def send(self, dev_id: int, action: str) -> tuple[str | None, str]:
         """Stuurt ON of OFF. Geeft (cmd_id, foutmelding) terug."""
         d = self.devices[dev_id]
+        driver = self.driver_for(d)
         if not d["tasmota_topic"]:
-            return None, "Geen Tasmota-topic ingesteld"
-        err = self._publish(f"cmnd/{d['tasmota_topic']}/POWER", "ON" if action == "on" else "OFF")
-        if err:
-            return None, err
+            return None, f"Geen {driver.topic_label} ingesteld"
+        # Eerst registreren: een snelle module (Shelly) kan antwoorden voor send() terug is.
         cmd_id = uuid.uuid4().hex[:12]
         with self.lock:
             self.pending.setdefault(dev_id, []).append((cmd_id, action, time.time()))
+        err = driver.send(dev_id, d, action)
+        if err:
+            with self.lock:
+                self.pending[dev_id] = [p for p in self.pending.get(dev_id, []) if p[0] != cmd_id]
+            return None, err
         return cmd_id, ""
 
     # ---------- RTU ----------
@@ -626,26 +605,8 @@ class Engine:
             "mqtt": {"connected": self.mqtt_connected, "error": self.mqtt_error},
             "devices": [
                 {"id": dev_id, "name": d["name"], "enabled": d["enabled"], "on_seconds": d["on_seconds"],
+                 "relay_type": d.get("relay_type") or "tasmota",
                  **self.state[dev_id].as_dict()}
                 for dev_id, d in list(self.devices.items()) if dev_id in self.state
             ],
         }
-
-
-def _dur(s: int) -> str:
-    s = int(s)
-    if s < 60:
-        return f"{s} s"
-    if s % 60 == 0:
-        return f"{s // 60} min"
-    return f"{s // 60} min {s % 60} s"
-
-
-def encode_pulsetime(seconds: int) -> int:
-    """Tasmota PulseTime: 1..111 = 0,1 s-stappen, 112..64900 = seconden + 100."""
-    seconds = int(seconds)
-    return seconds * 10 if seconds * 10 <= 111 else seconds + 100
-
-
-def decode_pulsetime(value: int) -> float:
-    return value / 10 if value <= 111 else value - 100
