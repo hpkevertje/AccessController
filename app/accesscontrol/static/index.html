@@ -10,16 +10,24 @@
 <header class="topbar">
   <div class="brand">AccessController</div>
   <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="members" role="tab">Leden</button>
-    <button class="tab" data-tab="events" role="tab">Logboek</button>
-    <button class="tab" data-tab="config" role="tab">Configuratie</button>
+    <button class="tab active" data-tab="members" role="tab" data-i18n="tab.members">Leden</button>
+    <button class="tab" data-tab="events" role="tab" data-i18n="tab.events">Logboek</button>
+    <button class="tab" data-tab="config" role="tab" data-i18n="tab.config">Configuratie</button>
   </nav>
-  <div class="who"><span id="mqtt-badge" class="badge">MQTT …</span><span id="me"></span></div>
+  <div class="who">
+    <span id="mqtt-badge" class="badge">MQTT …</span>
+    <select id="language-selector" class="language-selector" aria-label="Taal / Language / Langue">
+      <option value="nl">Nederlands</option>
+      <option value="en">English</option>
+      <option value="fr">Français</option>
+    </select>
+    <span id="me"></span>
+  </div>
 </header>
 
 <div id="sms-banner" class="sms-banner hidden" role="status">
   <span id="sms-banner-text"></span>
-  <button id="sms-banner-go" class="primary">Bekijken</button>
+  <button id="sms-banner-go" class="primary" data-i18n="status.view">Bekijken</button>
 </div>
 
 <section id="devices" class="devices"></section>
@@ -28,17 +36,17 @@
   <!-- LEDEN -->
   <section id="tab-members" class="panel">
     <div class="toolbar">
-      <input id="m-search" type="search" placeholder="Zoek op naam, lidnr, telefoon, opmerking">
+      <input id="m-search" type="search" data-i18n-placeholder="members.searchPlaceholder" placeholder="Zoek op naam, lidnr, telefoon, opmerking">
       <select id="m-filter">
-        <option value="">Alle leden</option>
-        <option value="nophone">Zonder telefoon</option>
-        <option value="noaccess">Zonder enige toegang</option>
+        <option value="" data-i18n="members.filterAll">Alle leden</option>
+        <option value="nophone" data-i18n="members.filterNoPhone">Zonder telefoon</option>
+        <option value="noaccess" data-i18n="members.filterNoAccess">Zonder enige toegang</option>
       </select>
       <span id="m-count" class="muted"></span>
       <span class="spacer"></span>
-      <button id="m-new" class="primary">+ Nieuw lid</button>
-      <button id="m-import">Importeren</button>
-      <a class="button" href="api/members/export.xlsx">Exporteren (Excel)</a>
+      <button id="m-new" class="primary" data-i18n="members.new">+ Nieuw lid</button>
+      <button id="m-import" data-i18n="common.import">Importeren</button>
+      <a class="button" href="api/members/export.xlsx" data-i18n="common.exportExcel">Exporteren (Excel)</a>
     </div>
     <div class="table-wrap">
       <table id="m-table">
@@ -51,46 +59,46 @@
   <!-- LOGBOEK -->
   <section id="tab-events" class="panel hidden">
     <div class="toolbar wrap">
-      <label>Van <input id="e-from" type="date"></label>
-      <label>Tot <input id="e-to" type="date"></label>
+      <label><span data-i18n="events.from">Van</span> <input id="e-from" type="date"></label>
+      <label><span data-i18n="events.to">Tot</span> <input id="e-to" type="date"></label>
       <select id="e-category">
-        <option value="">Alle soorten</option>
-        <option value="oproep">Oproep</option>
-        <option value="manueel">Manueel</option>
-        <option value="admin">Admin</option>
-        <option value="sms">SMS</option>
-        <option value="systeem">Systeem</option>
+        <option value="" data-i18n="events.allCategories">Alle soorten</option>
+        <option value="oproep" data-i18n="category.oproep">Oproep</option>
+        <option value="manueel" data-i18n="category.manueel">Manueel</option>
+        <option value="admin" data-i18n="category.admin">Admin</option>
+        <option value="sms" data-i18n="category.sms">SMS</option>
+        <option value="systeem" data-i18n="category.systeem">Systeem</option>
       </select>
       <select id="e-device">
-        <option value="">Alle toestellen</option>
+        <option value="" data-i18n="events.allDevices">Alle toestellen</option>
       </select>
       <select id="e-result">
-        <option value="">Alle resultaten</option>
-        <option value="toegelaten">Toegelaten</option>
-        <option value="geweigerd">Geweigerd</option>
-        <option value="ok">OK</option>
-        <option value="fout">Fout</option>
-        <option value="info">Info</option>
+        <option value="" data-i18n="events.allResults">Alle resultaten</option>
+        <option value="toegelaten" data-i18n="result.toegelaten">Toegelaten</option>
+        <option value="geweigerd" data-i18n="result.geweigerd">Geweigerd</option>
+        <option value="ok" data-i18n="result.ok">OK</option>
+        <option value="fout" data-i18n="result.fout">Fout</option>
+        <option value="info" data-i18n="result.info">Info</option>
       </select>
-      <input id="e-q" type="search" placeholder="Zoek naam, lidnr, telefoon, admin, tekst">
-      <button id="e-reset">Wissen</button>
+      <input id="e-q" type="search" data-i18n-placeholder="events.searchPlaceholder" placeholder="Zoek naam, lidnr, telefoon, admin, tekst">
+      <button id="e-reset" data-i18n="events.clear">Wissen</button>
       <span class="spacer"></span>
-      <label class="check"><input id="e-auto" type="checkbox" checked> Live</label>
-      <a id="e-export" class="button" href="api/events/export.xlsx">Exporteren (Excel)</a>
+      <label class="check"><input id="e-auto" type="checkbox" checked> <span data-i18n="events.live">Live</span></label>
+      <a id="e-export" class="button" href="api/events/export.xlsx" data-i18n="common.exportExcel">Exporteren (Excel)</a>
     </div>
     <div class="table-wrap">
       <table id="e-table">
         <thead><tr>
-          <th>Tijdstip</th><th>Soort</th><th>Toestel</th><th>Wie</th><th>Telefoon</th>
-          <th>Resultaat</th><th>Omschrijving</th><th>Detail</th><th class="c" title="Bevestigd door relaismodule">Relais</th>
+          <th data-i18n="events.col.time">Tijdstip</th><th data-i18n="events.col.category">Soort</th><th data-i18n="events.col.device">Toestel</th><th data-i18n="events.col.who">Wie</th><th data-i18n="events.col.phone">Telefoon</th>
+          <th data-i18n="events.col.result">Resultaat</th><th data-i18n="events.col.description">Omschrijving</th><th data-i18n="events.col.detail">Detail</th><th class="c" data-i18n="events.col.relay" data-i18n-title="events.col.relayTitle" title="Bevestigd door relaismodule">Relais</th>
         </tr></thead>
         <tbody></tbody>
       </table>
     </div>
     <div class="pager">
-      <button id="e-prev">‹ Vorige</button>
+      <button id="e-prev" data-i18n="events.prev">‹ Vorige</button>
       <span id="e-pageinfo" class="muted"></span>
-      <button id="e-next">Volgende ›</button>
+      <button id="e-next" data-i18n="events.next">Volgende ›</button>
     </div>
   </section>
 
@@ -98,48 +106,48 @@
   <section id="tab-config" class="panel hidden">
     <div class="config">
       <fieldset class="block">
-        <legend>Toestellen</legend>
-        <p class="muted full">Eén toestel = één RTU5024 (eigen telefoonnummer) en één relaismodule (Tasmota of Shelly 1 Gen3).</p>
+        <legend data-i18n="devices.legend">Toestellen</legend>
+        <p class="muted full" data-i18n="devices.help">Eén toestel = één RTU5024 (eigen telefoonnummer) en één relaismodule (Tasmota of Shelly 1 Gen3).</p>
         <div class="table-wrap full">
           <table id="dev-table">
-            <thead><tr><th>Naam</th><th>Actief</th><th>Seriële poort</th><th>Type</th><th>Topic / ID</th><th>Aan-tijd</th><th>Ontdubbeling</th><th></th></tr></thead>
+            <thead><tr><th data-i18n="devices.col.name">Naam</th><th data-i18n="devices.col.active">Actief</th><th data-i18n="devices.col.serial">Seriële poort</th><th data-i18n="devices.col.type">Type</th><th data-i18n="devices.col.topic">Topic / ID</th><th data-i18n="devices.col.onTime">Aan-tijd</th><th data-i18n="devices.col.dedupe">Ontdubbeling</th><th></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
-        <div class="full"><button id="dev-new" class="primary" type="button">+ Toestel toevoegen</button></div>
+        <div class="full"><button id="dev-new" class="primary" type="button" data-i18n="devices.add">+ Toestel toevoegen</button></div>
       </fieldset>
     </div>
 
     <form id="cfg-form" class="config" autocomplete="off">
       <fieldset>
-        <legend>MQTT</legend>
-        <label>Host <input name="mqtt.host" required></label>
-        <label>Poort <input name="mqtt.port" type="number" min="1" max="65535" required></label>
-        <label>Gebruiker <input name="mqtt.username"></label>
-        <label>Wachtwoord <input name="mqtt.password" type="password" placeholder="leeg = ongewijzigd"></label>
-        <label>Client-ID <input name="mqtt.client_id" required></label>
+        <legend data-i18n="config.mqtt">MQTT</legend>
+        <label><span data-i18n="config.host">Host</span> <input name="mqtt.host" required></label>
+        <label><span data-i18n="config.port">Poort</span> <input name="mqtt.port" type="number" min="1" max="65535" required></label>
+        <label><span data-i18n="config.username">Gebruiker</span> <input name="mqtt.username"></label>
+        <label><span data-i18n="config.password">Wachtwoord</span> <input name="mqtt.password" type="password" data-i18n-placeholder="config.passwordPlaceholder" placeholder="leeg = ongewijzigd"></label>
+        <label><span data-i18n="config.clientId">Client-ID</span> <input name="mqtt.client_id" required></label>
       </fieldset>
       <fieldset>
-        <legend>Algemeen</legend>
-        <label>Logboek bewaren (maanden) <input name="retention_months" type="number" min="1" max="240" required></label>
-        <label>Standaard landcode telefoon <input name="phone_region" maxlength="2" required></label>
+        <legend data-i18n="config.general">Algemeen</legend>
+        <label><span data-i18n="config.retentionMonths">Logboek bewaren (maanden)</span> <input name="retention_months" type="number" min="1" max="240" required></label>
+        <label><span data-i18n="config.phoneRegion">Standaard landcode telefoon</span> <input name="phone_region" maxlength="2" required></label>
       </fieldset>
       <fieldset>
-        <legend>Automatische back-up</legend>
-        <label class="check full"><input type="checkbox" name="backup.enabled"> Dagelijks een back-up maken</label>
-        <label>Map (in de container) <input name="backup.folder" placeholder="/backups"></label>
-        <label>Tijdstip <input name="backup.time" type="time"></label>
-        <label>Bewaren (dagen) <input name="backup.retention_days" type="number" min="1" max="3650"></label>
-        <label class="check full"><input type="checkbox" name="backup.sharepoint.enabled"> Ook naar SharePoint</label>
-        <label>Tenant-ID <input name="backup.sharepoint.tenant_id" placeholder="00000000-0000-…"></label>
-        <label>Client-ID (app) <input name="backup.sharepoint.client_id" placeholder="00000000-0000-…"></label>
-        <label class="full">Site-URL <input name="backup.sharepoint.site_url" placeholder="https://bedrijf.sharepoint.com/sites/IT"></label>
-        <label>Map in de documentbibliotheek <input name="backup.sharepoint.folder" placeholder="AccessController"></label>
-        <label>Bewaren op SharePoint (dagen) <input name="backup.sharepoint.retention_days" type="number" min="1" max="3650"></label>
+        <legend data-i18n="config.backupLegend">Automatische back-up</legend>
+        <label class="check full"><input type="checkbox" name="backup.enabled"> <span data-i18n="config.backupDaily">Dagelijks een back-up maken</span></label>
+        <label><span data-i18n="config.backupFolder">Map (in de container)</span> <input name="backup.folder" placeholder="/backups"></label>
+        <label><span data-i18n="config.backupTime">Tijdstip</span> <input name="backup.time" type="time"></label>
+        <label><span data-i18n="config.backupKeep">Bewaren (dagen)</span> <input name="backup.retention_days" type="number" min="1" max="3650"></label>
+        <label class="check full"><input type="checkbox" name="backup.sharepoint.enabled"> <span data-i18n="config.backupSharepoint">Ook naar SharePoint</span></label>
+        <label><span data-i18n="config.tenantId">Tenant-ID</span> <input name="backup.sharepoint.tenant_id" placeholder="00000000-0000-…"></label>
+        <label><span data-i18n="config.appClientId">Client-ID (app)</span> <input name="backup.sharepoint.client_id" placeholder="00000000-0000-…"></label>
+        <label class="full"><span data-i18n="config.siteUrl">Site-URL</span> <input name="backup.sharepoint.site_url" data-i18n-placeholder="config.siteUrlPlaceholder" placeholder="https://bedrijf.sharepoint.com/sites/IT"></label>
+        <label><span data-i18n="config.spFolder">Map in de documentbibliotheek</span> <input name="backup.sharepoint.folder" placeholder="AccessController"></label>
+        <label><span data-i18n="config.spKeep">Bewaren op SharePoint (dagen)</span> <input name="backup.sharepoint.retention_days" type="number" min="1" max="3650"></label>
         <p id="sp-secret" class="muted full"></p>
       </fieldset>
       <div class="form-actions">
-        <button type="submit" class="primary">Opslaan</button>
+        <button type="submit" class="primary" data-i18n="common.save">Opslaan</button>
         <span id="cfg-msg" class="muted"></span>
       </div>
       <ul id="cfg-errors" class="errors"></ul>
@@ -147,12 +155,12 @@
 
     <div class="config">
       <fieldset class="block">
-        <legend>Back-up nu</legend>
+        <legend data-i18n="config.backupNow">Back-up nu</legend>
         <div id="bk-status" class="full"></div>
         <div class="form-actions full">
-          <button id="bk-run" type="button">Nu back-up maken</button>
-          <a class="button" href="api/backup">Back-up downloaden</a>
-          <button id="bk-restore" type="button" class="danger">Back-up terugzetten…</button>
+          <button id="bk-run" type="button" data-i18n="config.backupRun">Nu back-up maken</button>
+          <a class="button" href="api/backup" data-i18n="config.backupDownload">Back-up downloaden</a>
+          <button id="bk-restore" type="button" class="danger" data-i18n="config.backupRestore">Back-up terugzetten…</button>
           <input id="bk-file" type="file" accept=".gz,.db" hidden>
         </div>
       </fieldset>
@@ -164,15 +172,15 @@
 <dialog id="dlg-member">
   <form method="dialog" id="member-form">
     <h2 id="member-title">Lid</h2>
-    <label>Lidnr <input name="member_no" required></label>
-    <label>Naam <input name="name" required></label>
-    <label>Telefoon <input name="phone" placeholder="0470 12 34 56 of +32 470 12 34 56"></label>
+    <label><span data-i18n="common.memberNo">Lidnr</span> <input name="member_no" required></label>
+    <label><span data-i18n="common.name">Naam</span> <input name="name" required></label>
+    <label><span data-i18n="common.phone">Telefoon</span> <input name="phone" data-i18n-placeholder="members.phonePlaceholder" placeholder="0470 12 34 56 of +32 470 12 34 56"></label>
     <div class="row" id="member-access"></div>
-    <label>Opmerking <textarea name="note" rows="3"></textarea></label>
+    <label><span data-i18n="common.note">Opmerking</span> <textarea name="note" rows="3"></textarea></label>
     <ul class="errors"></ul>
     <div class="dlg-actions">
-      <button value="cancel" formnovalidate>Annuleren</button>
-      <button id="member-save" value="save" class="primary">Opslaan</button>
+      <button value="cancel" formnovalidate data-i18n="common.cancel">Annuleren</button>
+      <button id="member-save" value="save" class="primary" data-i18n="common.save">Opslaan</button>
     </div>
   </form>
 </dialog>
@@ -180,16 +188,16 @@
 <!-- Import -->
 <dialog id="dlg-import">
   <form method="dialog" id="import-form">
-    <h2>Leden importeren</h2>
-    <p class="muted">Excel-bestand (.xlsx) in hetzelfde formaat als de export. Kolommen: <b>Lidnr</b> (verplicht),
+    <h2 data-i18n="import.title">Leden importeren</h2>
+    <p class="muted" data-i18n-html="import.helpHtml">Excel-bestand (.xlsx) in hetzelfde formaat als de export. Kolommen: <b>Lidnr</b> (verplicht),
       Naam, Telefoon, een kolom "Toegang &lt;toestel&gt;" per toestel, Opmerking. Toegang: ja / nee.
       Bestaande leden worden bijgewerkt op lidnr, leden die niet in het bestand staan blijven behouden.
       Bij één fout wordt het hele bestand geweigerd.</p>
     <input type="file" name="file" accept=".xlsx" required>
     <div id="import-result"></div>
     <div class="dlg-actions">
-      <button value="cancel" formnovalidate>Sluiten</button>
-      <button id="import-go" value="go" class="primary">Importeren</button>
+      <button value="cancel" formnovalidate data-i18n="import.close">Sluiten</button>
+      <button id="import-go" value="go" class="primary" data-i18n="common.import">Importeren</button>
     </div>
   </form>
 </dialog>
@@ -198,28 +206,28 @@
 <dialog id="dlg-device">
   <form method="dialog" id="device-form">
     <h2 id="device-title">Toestel</h2>
-    <label>Naam <input name="name" required placeholder="bv. Water, Poort, Slagboom"></label>
-    <label class="check"><input type="checkbox" name="enabled"> Actief</label>
-    <label>Seriële poort van de RTU <input name="serial_port" placeholder="/dev/serial/by-id/usb-…"></label>
-    <label>Baudrate <input name="baudrate" type="number" min="300"></label>
-    <label>Type relaismodule
+    <label><span data-i18n="common.name">Naam</span> <input name="name" required data-i18n-placeholder="devices.field.namePlaceholder" placeholder="bv. Water, Poort, Slagboom"></label>
+    <label class="check"><input type="checkbox" name="enabled"> <span data-i18n="devices.field.enabled">Actief</span></label>
+    <label><span data-i18n="devices.field.serial">Seriële poort van de RTU</span> <input name="serial_port" placeholder="/dev/serial/by-id/usb-…"></label>
+    <label><span data-i18n="devices.field.baudrate">Baudrate</span> <input name="baudrate" type="number" min="300"></label>
+    <label><span data-i18n="devices.field.relayType">Type relaismodule</span>
       <select name="relay_type">
         <option value="tasmota">Tasmota</option>
         <option value="shelly">Shelly 1 Gen3</option>
       </select>
     </label>
-    <label>MQTT-topic / Shelly-ID <input name="tasmota_topic" placeholder="zoals 'Topic' op de relaismodule"></label>
-    <label>Aan-tijd per toelating (seconden) <input name="on_seconds" type="number" min="1" max="64800"></label>
-    <label>Ontdubbeling oproepen (seconden, 0 = uit) <input name="dedupe_seconds" type="number" min="0" max="3600"></label>
+    <label><span data-i18n="devices.field.topic">MQTT-topic / Shelly-ID</span> <input name="tasmota_topic" data-i18n-placeholder="devices.topicPlaceholderTasmota" placeholder="zoals 'Topic' op de relaismodule"></label>
+    <label><span data-i18n="devices.field.onTime">Aan-tijd per toelating (seconden)</span> <input name="on_seconds" type="number" min="1" max="64800"></label>
+    <label><span data-i18n="devices.field.dedupe">Ontdubbeling oproepen (seconden, 0 = uit)</span> <input name="dedupe_seconds" type="number" min="0" max="3600"></label>
     <fieldset id="device-grant" class="grant">
-      <legend>Toegang voor alle bestaande leden?</legend>
-      <label class="check"><input type="radio" name="grant_all" value="1"> Ja, alle bestaande leden krijgen toegang</label>
-      <label class="check"><input type="radio" name="grant_all" value="0"> Nee, ik geef zelf toegang per lid</label>
+      <legend data-i18n="devices.grant.legend">Toegang voor alle bestaande leden?</legend>
+      <label class="check"><input type="radio" name="grant_all" value="1"> <span data-i18n="devices.grant.yes">Ja, alle bestaande leden krijgen toegang</span></label>
+      <label class="check"><input type="radio" name="grant_all" value="0"> <span data-i18n="devices.grant.no">Nee, ik geef zelf toegang per lid</span></label>
     </fieldset>
     <ul class="errors"></ul>
     <div class="dlg-actions">
-      <button value="cancel" formnovalidate>Annuleren</button>
-      <button id="device-save" value="save" class="primary">Opslaan</button>
+      <button value="cancel" formnovalidate data-i18n="common.cancel">Annuleren</button>
+      <button id="device-save" value="save" class="primary" data-i18n="common.save">Opslaan</button>
     </div>
   </form>
 </dialog>
@@ -230,8 +238,8 @@
     <h2 id="confirm-title">Bevestigen</h2>
     <p id="confirm-text"></p>
     <div class="dlg-actions">
-      <button value="cancel">Annuleren</button>
-      <button value="ok" id="confirm-ok" class="primary">OK</button>
+      <button value="cancel" data-i18n="common.cancel">Annuleren</button>
+      <button value="ok" id="confirm-ok" class="primary" data-i18n="common.ok">OK</button>
     </div>
   </form>
 </dialog>
