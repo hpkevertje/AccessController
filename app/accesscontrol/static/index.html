@@ -99,10 +99,10 @@
     <div class="config">
       <fieldset class="block">
         <legend>Toestellen</legend>
-        <p class="muted full">Eén toestel = één RTU5024 (eigen telefoonnummer) en één Tasmota-relais.</p>
+        <p class="muted full">Eén toestel = één RTU5024 (eigen telefoonnummer) en één relaismodule (Tasmota of Shelly 1 Gen3).</p>
         <div class="table-wrap full">
           <table id="dev-table">
-            <thead><tr><th>Naam</th><th>Actief</th><th>Seriële poort</th><th>Tasmota-topic</th><th>Aan-tijd</th><th>Ontdubbeling</th><th></th></tr></thead>
+            <thead><tr><th>Naam</th><th>Actief</th><th>Seriële poort</th><th>Type</th><th>Topic / ID</th><th>Aan-tijd</th><th>Ontdubbeling</th><th></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -202,7 +202,13 @@
     <label class="check"><input type="checkbox" name="enabled"> Actief</label>
     <label>Seriële poort van de RTU <input name="serial_port" placeholder="/dev/serial/by-id/usb-…"></label>
     <label>Baudrate <input name="baudrate" type="number" min="300"></label>
-    <label>Tasmota-topic <input name="tasmota_topic" placeholder="zoals 'Topic' op de relaismodule"></label>
+    <label>Type relaismodule
+      <select name="relay_type">
+        <option value="tasmota">Tasmota</option>
+        <option value="shelly">Shelly 1 Gen3</option>
+      </select>
+    </label>
+    <label>MQTT-topic / Shelly-ID <input name="tasmota_topic" placeholder="zoals 'Topic' op de relaismodule"></label>
     <label>Aan-tijd per toelating (seconden) <input name="on_seconds" type="number" min="1" max="64800"></label>
     <label>Ontdubbeling oproepen (seconden, 0 = uit) <input name="dedupe_seconds" type="number" min="0" max="3600"></label>
     <fieldset id="device-grant" class="grant">
