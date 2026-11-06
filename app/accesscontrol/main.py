@@ -58,6 +58,20 @@ async def require_cloudflare(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def no_cache_frontend(request: Request, call_next):
+    """Laat browsers en Cloudflare HTML/JS/CSS opnieuw controleren.
+
+    Zonder dit kan na een update een oude app.js uit de cache blijven draaien; de UI
+    toont dan bijvoorbeeld nog ruwe JSON van de SharePoint-test.
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 def user(request: Request) -> str:
     return request.state.user
 
