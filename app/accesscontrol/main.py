@@ -341,6 +341,18 @@ def backup_run(request: Request):
     return backup.run(engine.cfg, actor=user(request))
 
 
+@app.post("/api/backup/sharepoint/test")
+def sharepoint_test(request: Request):
+    """Test de SharePoint-verbinding stap voor stap (token, site, map, upload, publicatie)."""
+    result = sharepoint.diagnose(engine.cfg["backup"]["sharepoint"])
+    failed = [s for s in result["steps"] if not s["ok"]]
+    db.log_event("admin", actor=user(request), result="ok" if result["ok"] else "fout",
+                 reason="SharePoint-test" + ("" if result["ok"] else " mislukt"),
+                 detail=("; ".join(f"{s['step']}: {s.get('error', 'ok')}" for s in failed)[:1000]
+                         or "alle stappen geslaagd"))
+    return result
+
+
 @app.get("/api/backup")
 def backup_download(request: Request):
     name, data = backup.make()

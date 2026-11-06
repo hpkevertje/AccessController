@@ -35,6 +35,17 @@ def test_empty_sms_not_unread(client):
     assert c.get("/api/status").json()["sms_unread"]["count"] == 0
 
 
+def test_sharepoint_test_endpoint(client, monkeypatch):
+    c, db = client
+    from accesscontrol import main
+    monkeypatch.setattr(main.sharepoint, "diagnose",
+                        lambda cfg: {"ok": True, "steps": [{"step": "configuratie", "ok": True,
+                                                           "detail": "ok"}]})
+    r = c.post("/api/backup/sharepoint/test")
+    assert r.status_code == 200 and r.json()["ok"]
+    assert db.query_one("SELECT result FROM events WHERE reason='SharePoint-test'")["result"] == "ok"
+
+
 def test_devices_api_relay_type(client):
     c, _ = client
     r = c.post("/api/devices", json={"name": "Shelly", "enabled": False, "relay_type": "shelly",
