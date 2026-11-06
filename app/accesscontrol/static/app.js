@@ -464,6 +464,7 @@ function renderDeviceTable() {
       <td><b>${esc(d.name)}</b></td>
       <td>${d.enabled ? badge("actief", "ok") : badge("niet actief", "")}</td>
       <td class="mono">${esc(d.serial_port)}</td>
+      <td>${d.relay_type === "shelly" ? "Shelly 1 Gen3" : "Tasmota"}</td>
       <td class="mono">${esc(d.tasmota_topic)}</td>
       <td>${esc(fmtSetting(d.on_seconds))}</td>
       <td>${d.dedupe_seconds ? esc(d.dedupe_seconds + " s") : "uit"}</td>
@@ -471,7 +472,13 @@ function renderDeviceTable() {
         <button class="small" type="button" data-dev-edit="${d.id}">Bewerken</button>
         <button class="small danger" type="button" data-dev-del="${d.id}">Verwijderen</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="7" class="empty">Nog geen toestellen. Voeg er een toe.</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="8" class="empty">Nog geen toestellen. Voeg er een toe.</td></tr>`;
+}
+
+function deviceTopicPlaceholder(type) {
+  return type === "shelly"
+    ? "bv. shelly1g3-d0cf13dde9dc (topic_prefix van de Shelly)"
+    : "zoals 'Topic' op de relaismodule";
 }
 
 let editingDevice = null;
@@ -483,6 +490,8 @@ function openDevice(d) {
   f.enabled.checked = d ? d.enabled : true;
   f.serial_port.value = d ? d.serial_port : "";
   f.baudrate.value = d ? d.baudrate : 38400;
+  f.relay_type.value = d ? d.relay_type : "tasmota";
+  f.tasmota_topic.placeholder = deviceTopicPlaceholder(f.relay_type.value);
   f.tasmota_topic.value = d ? d.tasmota_topic : "";
   f.on_seconds.value = d ? d.on_seconds : 1;
   f.dedupe_seconds.value = d ? d.dedupe_seconds : 5;
@@ -492,6 +501,9 @@ function openDevice(d) {
   $("#dlg-device").showModal();
   f.name.focus();
 }
+$("#device-form select[name=relay_type]").addEventListener("change", (ev) => {
+  $("#device-form input[name=tasmota_topic]").placeholder = deviceTopicPlaceholder(ev.target.value);
+});
 $("#dev-new").addEventListener("click", () => openDevice(null));
 
 $("#device-save").addEventListener("click", async (ev) => {
@@ -500,7 +512,7 @@ $("#device-save").addEventListener("click", async (ev) => {
   const grant = $("input[name=grant_all]:checked", f);
   const body = {
     name: f.name.value, enabled: f.enabled.checked, serial_port: f.serial_port.value,
-    baudrate: Number(f.baudrate.value), tasmota_topic: f.tasmota_topic.value,
+    baudrate: Number(f.baudrate.value), relay_type: f.relay_type.value, tasmota_topic: f.tasmota_topic.value,
     on_seconds: Number(f.on_seconds.value), dedupe_seconds: Number(f.dedupe_seconds.value),
   };
   try {
