@@ -1,23 +1,25 @@
 # AccessController
 
 Toegangscontrole op basis van inkomende oproepen naar RTU5024 GSM-modules, bv. voor water en een poort.
-Een lid belt het nummer van een toestel, de app herkent het nummer en schakelt een Tasmota-relais.
+Een lid belt het nummer van een toestel, de app herkent het nummer en schakelt een relaismodule
+(Tasmota of Shelly 1 Gen3).
 
 ```
 Lid belt RTU5024 ──(RTU hangt op, gratis)──> debuglijn 38400 baud ──USB-TTL──> server (Docker)
                                                                                │
                                        webapp + listener: lid opzoeken, beslissen, loggen
                                                                                │ MQTT
-                                           Tasmota-relaismodule (bv. water: 20 min, poort: puls 1 s)
+                                           Tasmota- of Shelly-relaismodule (bv. water: 20 min, poort: puls 1 s)
 ```
 
-Een **toestel** is altijd één RTU5024 (eigen telefoonnummer) met één Tasmota-relais. Je voegt toestellen
-toe in de webapp.
+Een **toestel** is altijd één RTU5024 (eigen telefoonnummer) met één relaismodule (Tasmota of
+Shelly 1 Gen3). Je voegt toestellen toe in de webapp.
 
 ## Wat het doet
 
-- **Toestellen** beheer je onder Configuratie: naam, seriële poort van de RTU, Tasmota-topic, aan-tijd
-  en ontdubbeling. Bij een nieuw toestel kies je of alle bestaande leden er toegang toe krijgen.
+- **Toestellen** beheer je onder Configuratie: naam, seriële poort van de RTU, type relaismodule,
+  MQTT-topic / Shelly-ID, aan-tijd en ontdubbeling. Bij een nieuw toestel kies je of alle bestaande
+  leden er toegang toe krijgen.
   Een toestel verwijderen verwijdert de toegang van alle leden; het logboek blijft bewaard.
 - **Leden**: lidnr (verplicht, uniek), naam, telefoon (genormaliseerd naar +32...), opmerking en per
   toestel een schakelaar voor toegang. Eén telefoonnummer per lid, een nummer hoort bij maximaal één lid.
@@ -50,7 +52,8 @@ toe in de webapp.
 4. Anders: toegelaten, het relais gaat aan voor de aan-tijd van het toestel. Een nieuwe geldige
    oproep binnen die tijd herstart de teller.
 
-Tasmota houdt zelf de tijd bij (PulseTime). Valt de server of het netwerk weg, dan gaat het relais toch uit.
+De relaismodule houdt zelf de tijd bij (Tasmota met PulseTime, Shelly met een timer). Valt de server
+of het netwerk weg, dan gaat het relais toch uit.
 
 ## Installatie (Linux)
 
@@ -166,6 +169,31 @@ De app controleert telkens de module online komt en bij elke wijziging van het t
   wanneer het relais uit gaat.
 - `PowerOnState 0`: na stroomuitval blijft het relais uit.
 
+### Shelly 1 Gen3-relaismodule
+
+Per toestel kan je ook een [Shelly 1 Gen3](https://shelly-api-docs.shelly.cloud/gen2/) gebruiken.
+De Shelly praat met dezelfde broker en gebruikt dezelfde gebruiker en hetzelfde wachtwoord als de
+app: je stelt in de app één MQTT-broker in voor alle relaismodules.
+
+1. Zet MQTT aan in de Shelly: **Settings > Network > MQTT**, met de broker, gebruiker en het
+   wachtwoord van de app.
+2. Het Shelly-ID is de `topic_prefix` van de module. Je ziet die met `http://<ip>/rpc/MQTT.GetConfig`.
+   Is `topic_prefix` leeg, gebruik dan het ID van het toestel uit `Shelly.GetDeviceInfo`.
+3. RPC over MQTT moet aan staan (`enable_rpc`, en `rpc_ntf` voor de meldingen). Dat staat bij de
+   Shelly 1 Gen3 standaard al aan. `status_ntf` is niet nodig.
+4. Beveilig de webinterface van de Shelly, net als bij Tasmota: anders kan iedereen op het LAN het
+   relais schakelen zonder dat het in het logboek komt.
+
+Vul het Shelly-ID in als **MQTT-topic / Shelly-ID** en kies als type **Shelly 1 Gen3**. De app:
+
+- zet `auto_off`, `auto_off_delay` (de aan-tijd) en `initial_state` op `off` in de Shelly, maar
+  alleen als ze verschillen en nooit terwijl het relais aan is; anders gebeurt het zodra het relais
+  uit gaat.
+- stuurt bij elke AAN-opdracht `toggle_after` mee. Een herhaalde opdracht herstart de teller, zoals
+  bij Tasmota. Een lokale bediening (knop of webinterface) gaat uit via `auto_off`. Een AAN van een
+  ander programma zonder `toggle_after` gaat niet vanzelf uit.
+- De aan-tijd blijft ingesteld tussen 1 en 64800 seconden, net als bij Tasmota.
+
 ## Back-up
 
 Onder Configuratie > Automatische back-up:
@@ -207,8 +235,8 @@ Per toestel:
 
 - **RTU**: `ok`, `kabel niet verbonden` (de server leest niets van de USB-TTL-adapter) of
   `geen GSM-netwerk` (de RTU meldt geen SIM of geen registratie op het netwerk).
-- **Relaismodule**: de Tasmota-module is online of offline op MQTT.
-- **Relais**: aan (met resterende tijd) of uit, zoals Tasmota het meldt.
+- **Relaismodule**: de Tasmota- of Shelly-module is online of offline op MQTT.
+- **Relais**: aan (met resterende tijd) of uit, zoals de relaismodule het meldt.
 
 Bovenaan: **MQTT verbonden** = de server is verbonden met de broker.
 
@@ -227,14 +255,24 @@ Tasmota-topic van het toestel:
 | `tele/<t>/STATE`          | Tasmota > server | periodieke status met `POWER` |
 | `tele/<t>/LWT`            | Tasmota > server | `Online` / `Offline` |
 
+Voor Shelly 1 Gen3 gebruikt de app RPC over MQTT, met `<id>` = het Shelly-ID (de `topic_prefix`) en
+`<client-id>` = de MQTT-client-ID uit de configuratie (standaard `accesscontrol-server`):
+
+| Topic               | Richting        | Gebruik |
+|---------------------|-----------------|---------|
+| `<id>/rpc`          | server > Shelly | `Switch.GetStatus`, `Switch.GetConfig`, `Switch.Set` (met `toggle_after`) en `Switch.SetConfig` |
+| `<client-id>/rpc`   | Shelly > server | antwoord op een aanvraag (`result` of `error`) |
+| `<id>/events/rpc`   | Shelly > server | `NotifyStatus` met `switch:0` (aan/uit en timer) |
+| `<id>/online`       | Shelly > server | `true` / `false` (retained, LWT) |
+
 Een toestel toevoegen, wijzigen of verwijderen past alleen de abonnementen aan; de MQTT-verbinding
 wordt alleen opnieuw opgezet als de broker-instellingen wijzigen.
 
 Met `COMPOSE_PROFILES=mosquitto` draait Mosquitto in de stack op poort 1883, met gebruiker en
 wachtwoord uit de variabelen. Zonder dat profiel gebruikt de app de broker uit `MQTT_HOST`.
 
-Het logboek toont een vinkje in de kolom Relais als Tasmota binnen 15 s na het commando de
-verwachte `POWER`-status meldt.
+Het logboek toont een vinkje in de kolom Relais als de relaismodule binnen 15 s na het commando de
+verwachte status meldt.
 
 ## Ontwikkeling
 
