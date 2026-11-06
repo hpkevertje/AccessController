@@ -33,3 +33,20 @@ def test_empty_sms_not_unread(client):
     c, db = client
     db.log_event("sms", device="water", actor="+32470123456", reason="Lege SMS ontvangen", detail="(leeg)")
     assert c.get("/api/status").json()["sms_unread"]["count"] == 0
+
+
+def test_devices_api_relay_type(client):
+    c, _ = client
+    r = c.post("/api/devices", json={"name": "Shelly", "enabled": False, "relay_type": "shelly",
+                                     "tasmota_topic": "shelly1g3-api", "on_seconds": 120,
+                                     "grant_all": False})
+    assert r.status_code == 200
+    dev = r.json()
+    assert dev["relay_type"] == "shelly"
+
+    assert c.get("/api/devices").json()[0]["relay_type"] == "shelly"
+    status = c.get("/api/status").json()["devices"]
+    assert next(d for d in status if d["id"] == dev["id"])["relay_type"] == "shelly"
+
+    r = c.put(f"/api/devices/{dev['id']}", json={"relay_type": "tasmota"})
+    assert r.status_code == 200 and r.json()["relay_type"] == "tasmota"
