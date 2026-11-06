@@ -3,7 +3,52 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const CATEGORY = { oproep: "Oproep", manueel: "Manueel", admin: "Admin", sms: "SMS", systeem: "Systeem" };
+
+/* ---------------- Vertalingen / Translations / Traductions ---------------- */
+const I18N = window.I18N || { nl: {} };
+const LOCALES = window.LOCALES || { nl: "nl-BE" };
+
+let currentLanguage = (() => {
+  try {
+    const stored = localStorage.getItem("lang");
+    return I18N[stored] ? stored : "nl";
+  } catch { return "nl"; }
+})();
+
+function t(key, vars) {
+  const dict = I18N[currentLanguage] || I18N.nl;
+  const text = dict[key] ?? I18N.nl[key] ?? key;
+  return vars ? text.replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m)) : text;
+}
+
+const categoryLabel = (cat) => t(`category.${cat}`);
+const resultLabel = (res) => t(`result.${res}`);
+
+function applyStaticTranslations() {
+  $$("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  $$("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
+  $$("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  $$("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+}
+
+function applyLanguage(lang, persist = true) {
+  currentLanguage = I18N[lang] ? lang : "nl";
+  if (persist) {
+    try { localStorage.setItem("lang", currentLanguage); } catch { /* geen opslag */ }
+  }
+  document.documentElement.lang = currentLanguage;
+  $("#language-selector").value = currentLanguage;
+  applyStaticTranslations();
+  const deviceForm = $("#device-form");
+  if (deviceForm) deviceForm.tasmota_topic.placeholder = deviceTopicPlaceholder(deviceForm.relay_type.value);
+  if (lastStatus) renderStatus();
+  renderDeviceOptions();
+  renderMemberHead();
+  renderMembers();
+  renderDeviceTable();
+  if (!$("#tab-events").classList.contains("hidden")) loadEvents();
+  if (!$("#tab-config").classList.contains("hidden")) loadConfig();
+}
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -14,7 +59,7 @@ async function api(path, opts = {}) {
   let data = null;
   try { data = await res.json(); } catch { /* geen json */ }
   if (!res.ok) {
-    const err = new Error((data && data.detail) || `Fout ${res.status}`);
+    const err = new Error((data && data.detail) || t("error.api", { status: res.status }));
     err.errors = (data && data.errors) || [];
     err.status = res.status;
     throw err;
@@ -23,11 +68,11 @@ async function api(path, opts = {}) {
 }
 
 function toast(msg, error = false) {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = "toast" + (error ? " error" : "");
+  const el = $("#toast");
+  el.textContent = msg;
+  el.className = "toast" + (error ? " error" : "");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.add("hidden"), error ? 6000 : 3000);
+  toast.timer = setTimeout(() => el.classList.add("hidden"), error ? 6000 : 3000);
 }
 
 function confirmDialog(title, text, okLabel = "OK") {
@@ -44,7 +89,7 @@ function confirmDialog(title, text, okLabel = "OK") {
 const fmtTime = (iso) => {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleString("nl-BE", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleString(LOCALES[currentLanguage] || "nl-BE", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 };
 const fmtDur = (s) => {
   s = Math.max(0, Math.round(s));
@@ -71,7 +116,7 @@ async function loadStatus() {
     renderStatus();
   } catch (e) {
     $("#mqtt-badge").className = "badge bad";
-    $("#mqtt-badge").textContent = "Server onbereikbaar";
+    $("#mqtt-badge").textContent = t("status.serverUnreachable");
   }
 }
 
@@ -81,39 +126,39 @@ function renderStatus() {
   const s = lastStatus;
   const mb = $("#mqtt-badge");
   mb.className = "badge " + (s.mqtt.connected ? "ok" : "bad");
-  mb.textContent = s.mqtt.connected ? "MQTT verbonden" : "MQTT niet verbonden";
+  mb.textContent = s.mqtt.connected ? t("status.mqttConnected") : t("status.mqttDisconnected");
   mb.title = s.mqtt.error || "";
   renderSmsBanner(s.sms_unread);
 
   $("#devices").innerHTML = s.devices.length ? s.devices.map((d) => {
     const id = d.id;
     if (!d.enabled) {
-      return `<div class="device disabled"><h3>${esc(d.name)} ${badge("niet actief", "")}</h3>
-        <div class="muted">Activeer in Configuratie.</div></div>`;
+      return `<div class="device disabled"><h3>${esc(d.name)} ${badge(t("common.inactive"), "")}</h3>
+        <div class="muted">${t("status.activateInConfig")}</div></div>`;
     }
     // Eén RTU-status: kabel (seriële verbinding) en GSM-netwerk samen.
     const noNetwork = ["niet geregistreerd", "geen SIM"].includes(d.gsm);
     const rtu = !d.serial_connected
-      ? `<span class="badge bad" title="${esc(d.serial_error)}">RTU: kabel niet verbonden</span>`
+      ? `<span class="badge bad" title="${esc(d.serial_error)}">${t("status.rtuCable")}</span>`
       : noNetwork
-        ? `<span class="badge bad" title="GSM: ${esc(d.gsm)}">RTU: geen GSM-netwerk</span>`
-        : `<span class="badge ok" title="GSM: ${esc(d.gsm)}">RTU ok</span>`;
-    const esp = badge("Relaismodule " + d.esp, d.esp === "online" ? "ok" : d.esp === "offline" ? "bad" : "warn");
-    let relay = badge("Relais ?", "");
-    if (d.relay === "on") relay = `<span class="badge ok relay-on" data-remaining="${d.relay_remaining_s ?? ""}">Relais aan${d.relay_remaining_s != null ? ", nog " + fmtDur(d.relay_remaining_s) : ""}</span>`;
-    else if (d.relay === "off") relay = badge("Relais uit", "");
+        ? `<span class="badge bad" title="GSM: ${esc(d.gsm)}">${t("status.rtuNoGsm")}</span>`
+        : `<span class="badge ok" title="GSM: ${esc(d.gsm)}">${t("status.rtuOk")}</span>`;
+    const esp = badge(t("status.relayModule") + " " + d.esp, d.esp === "online" ? "ok" : d.esp === "offline" ? "bad" : "warn");
+    let relay = badge(t("status.relayUnknown"), "");
+    if (d.relay === "on") relay = `<span class="badge ok relay-on" data-remaining="${d.relay_remaining_s ?? ""}">${t("status.relayOn")}${d.relay_remaining_s != null ? t("status.remaining", { time: fmtDur(d.relay_remaining_s) }) : ""}</span>`;
+    else if (d.relay === "off") relay = badge(t("status.relayOff"), "");
     const long = d.on_seconds >= 10;
     const actions = long
-      ? `<button class="primary" data-act="on" data-dev="${id}">Aan (${fmtSetting(d.on_seconds)})</button>
-         <button data-act="off" data-dev="${id}">Uit</button>`
-      : `<button class="primary" data-act="on" data-dev="${id}">Open (${fmtSetting(d.on_seconds)} puls)</button>`;
+      ? `<button class="primary" data-act="on" data-dev="${id}">${t("common.on")} (${fmtSetting(d.on_seconds)})</button>
+         <button data-act="off" data-dev="${id}">${t("common.off")}</button>`
+      : `<button class="primary" data-act="on" data-dev="${id}">${t("common.open")} (${fmtSetting(d.on_seconds)} ${t("common.pulse")})</button>`;
     const sms = d.last_sms
-      ? `<div class="last-sms" title="${esc(d.last_sms.text)}"><span class="muted">Laatste SMS ${esc(fmtTime(d.last_sms.ts))}, van ${esc(d.last_sms.sender)}:</span> ${esc(d.last_sms.text)}</div>`
+      ? `<div class="last-sms" title="${esc(d.last_sms.text)}"><span class="muted">${t("status.lastSms")} ${esc(fmtTime(d.last_sms.ts))}, ${t("status.from")} ${esc(d.last_sms.sender)}:</span> ${esc(d.last_sms.text)}</div>`
       : "";
     return `<div class="device"><h3>${esc(d.name)}</h3>
       <div class="badges">${rtu}${esp}${relay}</div>
       <div class="actions">${actions}</div>${sms}</div>`;
-  }).join("") : `<div class="device disabled"><h3>Nog geen toestellen</h3><div class="muted">Voeg een toestel toe onder Configuratie.</div></div>`;
+  }).join("") : `<div class="device disabled"><h3>${t("devices.noDevices")}</h3><div class="muted">${t("devices.addUnderConfig")}</div></div>`;
 }
 
 function renderSmsBanner(u) {
@@ -122,7 +167,7 @@ function renderSmsBanner(u) {
   if (!u || !u.count) { banner.classList.add("hidden"); return; }
   const n = u.newest;
   const from = n.member_name ? `${n.member_name} (${n.actor})` : n.actor;
-  $("#sms-banner-text").innerHTML = `<b>${u.count} nieuwe SMS</b> <span class="muted">${esc(n.device || "")}, ${esc(fmtTime(n.ts))}, van ${esc(from)}:</span> ${esc(n.detail || "")}`;
+  $("#sms-banner-text").innerHTML = `<b>${esc(t("status.newSms", { count: u.count }))}</b> <span class="muted">${esc(n.device || "")}, ${esc(fmtTime(n.ts))}, ${t("status.from")} ${esc(from)}:</span> ${esc(n.detail || "")}`;
   banner.classList.remove("hidden");
 }
 
@@ -144,7 +189,7 @@ setInterval(() => {
     if (Number.isNaN(r)) return;
     const n = Math.max(0, r - 1);
     el.dataset.remaining = n;
-    el.textContent = `Relais aan, nog ${fmtDur(n)}`;
+    el.textContent = t("status.relayOnRemaining", { time: fmtDur(n) });
   });
 }, 1000);
 
@@ -153,26 +198,31 @@ $("#devices").addEventListener("click", async (ev) => {
   if (!b) return;
   const dev = b.dataset.dev, act = b.dataset.act;
   const d = lastStatus.devices.find((x) => String(x.id) === dev);
-  const text = act === "off" ? `${d.name} nu uitschakelen?`
-    : d.on_seconds >= 10 ? `${d.name} inschakelen voor ${fmtSetting(d.on_seconds)}?` : `${d.name} openen?`;
-  if (!(await confirmDialog("Manuele bediening", text, act === "off" ? "Uitschakelen" : "Uitvoeren"))) return;
+  const text = act === "off" ? t("control.disableNow", { name: d.name })
+    : d.on_seconds >= 10 ? t("control.enableFor", { name: d.name, time: fmtSetting(d.on_seconds) }) : t("control.open", { name: d.name });
+  if (!(await confirmDialog(t("control.manual"), text, act === "off" ? t("control.disable") : t("control.execute")))) return;
   try {
     await api(`api/devices/${dev}/${act}`, { method: "POST", body: {} });
-    toast("Commando verzonden.");
+    toast(t("control.sent"));
     setTimeout(loadStatus, 800);
   } catch (e) { toast(e.message, true); }
 });
 
 /* ---------------- Toestellen (lijst) ---------------- */
 let devicesList = [];
+
+function renderDeviceOptions() {
+  const sel = $("#e-device"), cur = sel.value;
+  sel.innerHTML = `<option value="">${esc(t("events.allDevices"))}</option>` +
+    devicesList.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join("");
+  sel.value = cur;
+}
+
 async function loadDevices() {
   try {
     devicesList = await api("api/devices");
   } catch (e) { toast(e.message, true); }
-  const sel = $("#e-device"), cur = sel.value;
-  sel.innerHTML = `<option value="">Alle toestellen</option>` +
-    devicesList.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join("");
-  sel.value = cur;
+  renderDeviceOptions();
   renderMemberHead();
   renderMembers();
 }
@@ -190,11 +240,11 @@ async function loadMembers() {
 
 function renderMemberHead() {
   $("#m-head").innerHTML = `
-    <th data-sort="member_no">Lidnr</th>
-    <th data-sort="name">Naam</th>
-    <th data-sort="phone">Telefoon</th>
+    <th data-sort="member_no">${t("common.memberNo")}</th>
+    <th data-sort="name">${t("common.name")}</th>
+    <th data-sort="phone">${t("common.phone")}</th>
     ${devicesList.map((d) => `<th data-sort="acc:${d.id}" class="c">${esc(d.name)}</th>`).join("")}
-    <th data-sort="note">Opmerking</th>
+    <th data-sort="note">${t("common.note")}</th>
     <th></th>`;
 }
 
@@ -223,14 +273,14 @@ function renderMembers() {
   rows.sort((a, b) => {
     const x = sortValue(a, sort.key), y = sortValue(b, sort.key);
     if (typeof x === "boolean") return (x === y ? 0 : x ? -1 : 1) * sort.dir;
-    return String(x ?? "").localeCompare(String(y ?? ""), "nl", { numeric: true, sensitivity: "base" }) * sort.dir;
+    return String(x ?? "").localeCompare(String(y ?? ""), currentLanguage, { numeric: true, sensitivity: "base" }) * sort.dir;
   });
   $$("#m-head th[data-sort]").forEach((th) => {
     th.classList.toggle("asc", th.dataset.sort === sort.key && sort.dir === 1);
     th.classList.toggle("desc", th.dataset.sort === sort.key && sort.dir === -1);
   });
-  $("#m-count").textContent = `${rows.length} van ${membersData.length}`;
-  const sw = (m, d) => `<label class="switch" title="Toegang ${esc(d.name)}"><input type="checkbox" data-dev="${d.id}" data-id="${m.id}" ${m.access[d.id] ? "checked" : ""}><span></span></label>`;
+  $("#m-count").textContent = t("members.count", { shown: rows.length, total: membersData.length });
+  const sw = (m, d) => `<label class="switch" title="${esc(t("members.accessTitle", { device: d.name }))}"><input type="checkbox" data-dev="${d.id}" data-id="${m.id}" ${m.access[d.id] ? "checked" : ""}><span></span></label>`;
   const cols = 5 + devicesList.length;
   $("#m-table tbody").innerHTML = rows.length ? rows.map((m) => `
     <tr class="${Object.values(m.access).some(Boolean) ? "" : "inactive"}">
@@ -240,10 +290,10 @@ function renderMembers() {
       ${devicesList.map((d) => `<td class="c">${sw(m, d)}</td>`).join("")}
       <td class="note">${esc(m.note)}</td>
       <td class="actions">
-        <button class="small" data-edit="${m.id}">Bewerken</button>
-        <button class="small danger" data-del="${m.id}">Verwijderen</button>
+        <button class="small" data-edit="${m.id}">${t("common.edit")}</button>
+        <button class="small danger" data-del="${m.id}">${t("common.delete")}</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="${cols}" class="empty">Geen leden gevonden.</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="${cols}" class="empty">${t("members.none")}</td></tr>`;
 }
 
 $("#m-search").addEventListener("input", renderMembers);
@@ -270,10 +320,10 @@ $("#m-table tbody").addEventListener("click", async (ev) => {
   if (edit) openMember(membersData.find((m) => m.id === +edit.dataset.edit));
   if (del) {
     const m = membersData.find((x) => x.id === +del.dataset.del);
-    if (!(await confirmDialog("Lid verwijderen", `${m.name} (lidnr ${m.member_no}) definitief verwijderen? Het logboek blijft bewaard.`, "Verwijderen"))) return;
+    if (!(await confirmDialog(t("members.deleteTitle"), t("members.deleteText", { name: m.name, no: m.member_no }), t("common.delete")))) return;
     try {
       await api(`api/members/${m.id}`, { method: "DELETE" });
-      toast("Lid verwijderd.");
+      toast(t("members.deleted"));
       loadMembers();
     } catch (e) { toast(e.message, true); }
   }
@@ -283,14 +333,14 @@ let editingId = null;
 function openMember(m) {
   editingId = m ? m.id : null;
   const f = $("#member-form");
-  $("#member-title").textContent = m ? `Lid ${m.member_no} bewerken` : "Nieuw lid";
+  $("#member-title").textContent = m ? t("members.titleEdit") : t("members.titleNew");
   f.member_no.value = m ? m.member_no : "";
   f.name.value = m ? m.name : "";
   f.phone.value = m ? m.phone || "" : "";
   f.note.value = m ? m.note : "";
   $("#member-access").innerHTML = devicesList.length
-    ? devicesList.map((d) => `<label class="check"><input type="checkbox" data-access="${d.id}" ${!m || m.access[d.id] ? "checked" : ""}> Toegang ${esc(d.name)}</label>`).join("")
-    : `<span class="muted">Nog geen toestellen.</span>`;
+    ? devicesList.map((d) => `<label class="check"><input type="checkbox" data-access="${d.id}" ${!m || m.access[d.id] ? "checked" : ""}> ${t("common.access")} ${esc(d.name)}</label>`).join("")
+    : `<span class="muted">${t("devices.noDevices")}</span>`;
   $(".errors", f).innerHTML = "";
   $("#dlg-member").showModal();
   f.member_no.focus();
@@ -307,7 +357,7 @@ $("#member-save").addEventListener("click", async (ev) => {
     if (editingId) await api(`api/members/${editingId}`, { method: "PUT", body });
     else await api("api/members", { method: "POST", body });
     $("#dlg-member").close();
-    toast("Opgeslagen.");
+    toast(t("members.saved"));
     loadMembers();
   } catch (e) {
     $(".errors", f).innerHTML = (e.errors.length ? e.errors : [e.message]).map((x) => `<li>${esc(x)}</li>`).join("");
@@ -323,16 +373,16 @@ $("#m-import").addEventListener("click", () => {
 $("#import-go").addEventListener("click", async (ev) => {
   ev.preventDefault();
   const input = $("#import-form").file;
-  if (!input.files.length) { $("#import-result").innerHTML = `<p class="errors">Kies een bestand.</p>`; return; }
+  if (!input.files.length) { $("#import-result").innerHTML = `<p class="errors">${esc(t("import.chooseFile"))}</p>`; return; }
   const fd = new FormData();
   fd.append("file", input.files[0]);
   $("#import-go").disabled = true;
   try {
     const r = await api("api/members/import", { method: "POST", body: fd });
-    $("#import-result").innerHTML = `<p class="ok">Import gelukt: ${r.nieuw} nieuw, ${r.gewijzigd} gewijzigd, ${r.ongewijzigd} ongewijzigd. ${r.niet_in_bestand} bestaande leden stonden niet in het bestand en zijn behouden.</p>`;
+    $("#import-result").innerHTML = `<p class="ok">${esc(t("import.success", { created: r.nieuw, updated: r.gewijzigd, unchanged: r.ongewijzigd, missing: r.niet_in_bestand }))}</p>`;
     loadMembers();
   } catch (e) {
-    $("#import-result").innerHTML = `<p class="errors">Bestand geweigerd, er is niets gewijzigd.</p>
+    $("#import-result").innerHTML = `<p class="errors">${esc(t("import.rejected"))}</p>
       <ul class="errors">${(e.errors.length ? e.errors : [e.message]).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
   } finally { $("#import-go").disabled = false; }
 });
@@ -363,25 +413,25 @@ async function loadEvents() {
   try {
     const r = await api("api/events?" + p.toString());
     const pages = Math.max(1, Math.ceil(r.total / EV_PAGE_SIZE));
-    $("#e-pageinfo").textContent = `Pagina ${evPage} van ${pages} (${r.total} regels)`;
+    $("#e-pageinfo").textContent = t("events.pageInfo", { page: evPage, pages, total: r.total });
     $("#e-prev").disabled = evPage <= 1;
     $("#e-next").disabled = evPage >= pages;
     $("#e-table tbody").innerHTML = r.items.length ? r.items.map((e) => {
       const who = e.member_name ? `${esc(e.member_name)} <span class="muted">(${esc(e.member_no)})</span>`
-        : e.category === "oproep" ? `<span class="muted">onbekend</span>` : esc(e.actor || "");
-      const adminBy = (e.category === "admin" || e.category === "manueel") && e.member_name ? `<div class="muted">door ${esc(e.actor)}</div>` : "";
-      const conf = e.cmd_id ? (e.confirmed_at ? `<span title="Bevestigd ${esc(fmtTime(e.confirmed_at))}">✓</span>` : `<span class="muted" title="Geen bevestiging van de relaismodule">–</span>`) : "";
+        : e.category === "oproep" ? `<span class="muted">${esc(t("events.unknown"))}</span>` : esc(e.actor || "");
+      const adminBy = (e.category === "admin" || e.category === "manueel") && e.member_name ? `<div class="muted">${esc(t("events.by", { actor: e.actor }))}</div>` : "";
+      const conf = e.cmd_id ? (e.confirmed_at ? `<span title="${esc(t("events.confirmedAt", { time: fmtTime(e.confirmed_at) }))}">✓</span>` : `<span class="muted" title="${esc(t("events.noConfirmation"))}">–</span>`) : "";
       return `<tr>
         <td class="mono">${esc(fmtTime(e.ts))}</td>
-        <td>${esc(CATEGORY[e.category] || e.category)}</td>
+        <td>${esc(categoryLabel(e.category))}</td>
         <td>${esc(e.device || "")}</td>
         <td>${who}${adminBy}</td>
         <td class="phone">${esc(e.phone || "")}</td>
-        <td>${e.result ? badge(e.result, RESULT_CLS[e.result] ?? "") : ""}</td>
+        <td>${e.result ? badge(resultLabel(e.result), RESULT_CLS[e.result] ?? "") : ""}</td>
         <td>${esc(e.reason || "")}</td>
         <td class="detail">${esc(e.detail || "")}</td>
         <td class="c">${conf}</td></tr>`;
-    }).join("") : `<tr><td colspan="9" class="empty">Geen regels voor deze filters.</td></tr>`;
+    }).join("") : `<tr><td colspan="9" class="empty">${t("events.none")}</td></tr>`;
   } catch (e) { toast(e.message, true); }
 }
 
@@ -400,7 +450,9 @@ setInterval(() => {
   if (!$("#tab-events").classList.contains("hidden") && $("#e-auto").checked && evPage === 1) loadEvents();
 }, 5000);
 
-/* ---------------- Configuratie ---------------- */
+$("#language-selector").addEventListener("change", (ev) => {
+  applyLanguage(ev.target.value);
+});
 function showErrors(el, e) {
   el.innerHTML = (e.errors && e.errors.length ? e.errors : [e.message]).map((x) => `<li>${esc(x)}</li>`).join("");
 }
@@ -415,10 +467,10 @@ async function loadConfig() {
       else if (el.name !== "mqtt.password") el.value = v ?? "";
     }
     f["mqtt.password"].value = "";
-    f["mqtt.password"].placeholder = cfg.mqtt.password_set ? "ingesteld, leeg = ongewijzigd" : "geen wachtwoord";
+    f["mqtt.password"].placeholder = cfg.mqtt.password_set ? t("config.passwordSet") : t("config.passwordNone");
     $("#sp-secret").textContent = bk.sharepoint_secret_set
-      ? "Client secret: ingesteld via SHAREPOINT_CLIENT_SECRET."
-      : "Client secret: niet ingesteld. Zet SHAREPOINT_CLIENT_SECRET in de stack-variabelen.";
+      ? t("config.secretSet")
+      : t("config.secretNone");
     renderBackupStatus(bk);
     $("#cfg-errors").innerHTML = "";
     $("#cfg-msg").textContent = "";
@@ -429,13 +481,13 @@ async function loadConfig() {
 
 function renderBackupStatus(bk) {
   const l = bk.last;
-  if (!l) { $("#bk-status").innerHTML = `<span class="muted">Nog geen back-up gemaakt.</span>`; return; }
+  if (!l) { $("#bk-status").innerHTML = `<span class="muted">${esc(t("config.backupNone"))}</span>`; return; }
   const part = (label, r) => !r ? "" : r.ok
-    ? `<div>${label}: ok${r.path ? ` (${esc(r.path)})` : ""}${r.url ? ` (<a href="${esc(r.url)}" target="_blank" rel="noopener">openen</a>)` : ""}</div>`
-    : `<div class="bad">${label}: ${esc(r.error)}</div>`;
-  $("#bk-status").innerHTML = `<div><b>Laatste back-up:</b> ${esc(fmtTime(l.ts))}, ${esc(l.file)} (${Math.round(l.size / 1024)} kB)${l.automatic ? ", automatisch" : ""}</div>`
-    + part("Map", l.local) + part("SharePoint", l.sharepoint)
-    + (bk.last_ok && bk.last_ok !== l.ts ? `<div class="muted">Laatste geslaagde: ${esc(fmtTime(bk.last_ok))}</div>` : "");
+    ? `<div>${esc(label)}: ok${r.path ? ` (${esc(r.path)})` : ""}${r.url ? ` (<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(t("config.open"))}</a>)` : ""}</div>`
+    : `<div class="bad">${esc(label)}: ${esc(r.error)}</div>`;
+  $("#bk-status").innerHTML = `<div><b>${esc(t("config.lastBackup"))}</b> ${esc(fmtTime(l.ts))}, ${esc(l.file)} (${Math.round(l.size / 1024)} kB)${l.automatic ? esc(t("config.automatic")) : ""}</div>`
+    + part(t("config.folder"), l.local) + part(t("config.sharepoint"), l.sharepoint)
+    + (bk.last_ok && bk.last_ok !== l.ts ? `<div class="muted">${esc(t("config.lastSuccess", { time: fmtTime(bk.last_ok) }))}</div>` : "");
 }
 
 $("#cfg-form").addEventListener("submit", async (ev) => {
@@ -450,8 +502,8 @@ $("#cfg-form").addEventListener("submit", async (ev) => {
   try {
     await api("api/config", { method: "PUT", body });
     $("#cfg-errors").innerHTML = "";
-    $("#cfg-msg").textContent = "Opgeslagen.";
-    toast("Configuratie opgeslagen.");
+    $("#cfg-msg").textContent = t("members.saved");
+    toast(t("config.saved"));
     loadConfig();
     setTimeout(loadStatus, 1500);
   } catch (e) { showErrors($("#cfg-errors"), e); }
@@ -462,30 +514,30 @@ function renderDeviceTable() {
   $("#dev-table tbody").innerHTML = devicesList.length ? devicesList.map((d) => `
     <tr>
       <td><b>${esc(d.name)}</b></td>
-      <td>${d.enabled ? badge("actief", "ok") : badge("niet actief", "")}</td>
+      <td>${d.enabled ? badge(t("common.active"), "ok") : badge(t("common.inactive"), "")}</td>
       <td class="mono">${esc(d.serial_port)}</td>
       <td>${d.relay_type === "shelly" ? "Shelly 1 Gen3" : "Tasmota"}</td>
       <td class="mono">${esc(d.tasmota_topic)}</td>
       <td>${esc(fmtSetting(d.on_seconds))}</td>
-      <td>${d.dedupe_seconds ? esc(d.dedupe_seconds + " s") : "uit"}</td>
+      <td>${d.dedupe_seconds ? esc(d.dedupe_seconds + " s") : t("common.offValue")}</td>
       <td class="actions">
-        <button class="small" type="button" data-dev-edit="${d.id}">Bewerken</button>
-        <button class="small danger" type="button" data-dev-del="${d.id}">Verwijderen</button>
+        <button class="small" type="button" data-dev-edit="${d.id}">${t("common.edit")}</button>
+        <button class="small danger" type="button" data-dev-del="${d.id}">${t("common.delete")}</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="8" class="empty">Nog geen toestellen. Voeg er een toe.</td></tr>`;
+    </tr>`).join("") : `<tr><td colspan="8" class="empty">${t("devices.noDevices")} ${t("devices.addOne")}</td></tr>`;
 }
 
 function deviceTopicPlaceholder(type) {
   return type === "shelly"
-    ? "bv. shelly1g3-d0cf13dde9dc (topic_prefix van de Shelly)"
-    : "zoals 'Topic' op de relaismodule";
+    ? t("devices.topicPlaceholderShelly")
+    : t("devices.topicPlaceholderTasmota");
 }
 
 let editingDevice = null;
 function openDevice(d) {
   editingDevice = d ? d.id : null;
   const f = $("#device-form");
-  $("#device-title").textContent = d ? `Toestel ${d.name} bewerken` : "Nieuw toestel";
+  $("#device-title").textContent = d ? t("devices.titleEdit", { name: d.name }) : t("devices.titleNew");
   f.name.value = d ? d.name : "";
   f.enabled.checked = d ? d.enabled : true;
   f.serial_port.value = d ? d.serial_port : "";
@@ -519,11 +571,11 @@ $("#device-save").addEventListener("click", async (ev) => {
     if (editingDevice) {
       await api(`api/devices/${editingDevice}`, { method: "PUT", body });
     } else {
-      if (!grant) { showErrors($(".errors", f), { errors: ["Kies of alle bestaande leden toegang krijgen."] }); return; }
+      if (!grant) { showErrors($(".errors", f), { errors: [t("devices.grantRequired")] }); return; }
       await api("api/devices", { method: "POST", body: { ...body, grant_all: grant.value === "1" } });
     }
     $("#dlg-device").close();
-    toast("Toestel opgeslagen.");
+    toast(t("devices.saved"));
     await loadDevices();
     renderDeviceTable();
     loadMembers();
@@ -537,10 +589,10 @@ $("#dev-table tbody").addEventListener("click", async (ev) => {
   if (edit) openDevice(devicesList.find((d) => d.id === +edit.dataset.devEdit));
   if (del) {
     const d = devicesList.find((x) => x.id === +del.dataset.devDel);
-    if (!(await confirmDialog("Toestel verwijderen", `${d.name} verwijderen? De toegang van alle leden tot dit toestel verdwijnt. Het logboek blijft bewaard.`, "Verwijderen"))) return;
+    if (!(await confirmDialog(t("devices.deleteTitle"), t("devices.deleteText", { name: d.name }), t("common.delete")))) return;
     try {
       await api(`api/devices/${d.id}`, { method: "DELETE" });
-      toast("Toestel verwijderd.");
+      toast(t("devices.deleted"));
       await loadDevices();
       renderDeviceTable();
       loadMembers();
@@ -554,7 +606,7 @@ $("#bk-run").addEventListener("click", async () => {
   $("#bk-run").disabled = true;
   try {
     const r = await api("api/backup/run", { method: "POST", body: {} });
-    toast(r.ok ? "Back-up gemaakt." : "Back-up gemaakt met fouten.", !r.ok);
+    toast(r.ok ? t("config.backupCreated") : t("config.backupCreatedErrors"), !r.ok);
     renderBackupStatus(await api("api/backup/status"));
   } catch (e) { toast(e.message, true); } finally { $("#bk-run").disabled = false; }
 });
@@ -563,15 +615,15 @@ $("#bk-restore").addEventListener("click", () => { $("#bk-file").value = ""; $("
 $("#bk-file").addEventListener("change", async () => {
   const file = $("#bk-file").files[0];
   if (!file) return;
-  const ok = await confirmDialog("Back-up terugzetten",
-    `${file.name} terugzetten? Alle leden, toestellen, instellingen en het logboek worden vervangen door de inhoud van deze back-up. Er wordt eerst een veiligheidskopie van de huidige toestand gemaakt.`,
-    "Terugzetten");
+  const ok = await confirmDialog(t("config.restoreTitle"),
+    t("config.restoreText", { file: file.name }),
+    t("config.restoreButton"));
   if (!ok) return;
   const fd = new FormData();
   fd.append("file", file);
   try {
     const r = await api("api/backup/restore", { method: "POST", body: fd });
-    toast(`Back-up teruggezet (${r.members} leden). De pagina wordt herladen.`);
+    toast(t("config.restored", { count: r.members }));
     setTimeout(() => location.reload(), 1500);
   } catch (e) { toast(e.errors && e.errors.length ? e.errors.join(" ") : e.message, true); }
 });
@@ -580,8 +632,9 @@ $("#bk-file").addEventListener("change", async () => {
 (async function init() {
   try {
     const me = await api("api/me");
-    $("#me").textContent = me.auth_disabled ? `${me.email} (zonder Cloudflare)` : me.email;
+    $("#me").textContent = me.auth_disabled ? t("me.noCloudflare", { email: me.email }) : me.email;
   } catch (e) { toast(e.message, true); }
+  applyLanguage(currentLanguage, false);
   loadStatus();
   setInterval(loadStatus, 3000);
   await loadDevices();
