@@ -21,6 +21,11 @@ function t(key, vars) {
   return vars ? text.replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m)) : text;
 }
 
+function hasTranslation(key) {
+  const dict = I18N[currentLanguage] || I18N.nl;
+  return dict[key] !== undefined || I18N.nl[key] !== undefined;
+}
+
 const categoryLabel = (cat) => t(`category.${cat}`);
 const resultLabel = (res) => t(`result.${res}`);
 
@@ -490,6 +495,43 @@ function renderBackupStatus(bk) {
     + (bk.last_ok && bk.last_ok !== l.ts ? `<div class="muted">${esc(t("config.lastSuccess", { time: fmtTime(bk.last_ok) }))}</div>` : "");
 }
 
+function spDetailText(step, detail) {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  switch (step) {
+    case "config":
+      return detail.missing && detail.missing.length
+        ? t("config.spDetail.configMissing", { fields: detail.missing.join(", ") })
+        : t("config.spDetail.config");
+    case "secret":
+      return detail.set ? t("config.spDetail.secret") : t("config.spDetail.secretMissing");
+    case "token":
+      return t("config.spDetail.token");
+    case "site":
+      return t("config.spDetail.site", { id: detail.id ?? "" });
+    case "drive":
+      return t("config.spDetail.drive", { name: detail.name ?? "", url: detail.url ?? "" });
+    case "folder":
+      if (detail.root) return t("config.spDetail.folderRoot");
+      return detail.exists
+        ? t("config.spDetail.folderExists", { folder: detail.folder ?? "", count: detail.count ?? 0 })
+        : t("config.spDetail.folderMissing", { folder: detail.folder ?? "" });
+    case "upload":
+      return t("config.spDetail.upload", { file: detail.file ?? "", bytes: detail.bytes ?? 0 });
+    case "publication": {
+      const level = ["published", "checkout"].includes(detail.level) ? detail.level : "none";
+      let text = t("config.spDetail.publication", { level: t(`config.spLevel.${level}`) });
+      if (detail.moderation) text += ` — ${t(`config.spModeration.${detail.moderation}`)}`;
+      if (detail.moderation_error) text += ` — ${detail.moderation_error}`;
+      return text;
+    }
+    case "cleanup":
+      return detail.deleted ? t("config.spDetail.cleanupDone") : t("config.spDetail.cleanupSkipped");
+    default:
+      return JSON.stringify(detail);
+  }
+}
+
 $("#sp-test").addEventListener("click", async () => {
   const btn = $("#sp-test");
   const out = $("#sp-test-result");
@@ -498,9 +540,11 @@ $("#sp-test").addEventListener("click", async () => {
   try {
     const r = await api("api/backup/sharepoint/test", { method: "POST", body: {} });
     out.innerHTML = r.steps.map((s) => {
-      const detail = s.ok ? s.detail : s.error;
-      const text = typeof detail === "string" ? detail : JSON.stringify(detail);
-      return `<div class="${s.ok ? "ok" : "bad"}">${s.ok ? "✓" : "✗"} ${esc(s.step)}: ${esc(text ?? "")}</div>`;
+      const codeKey = s.error_code ? `config.spErr.${s.error_code}` : "";
+      const codeText = codeKey && hasTranslation(codeKey) ? t(codeKey) : "";
+      const text = s.detail !== undefined && s.detail !== null
+        ? spDetailText(s.step, s.detail) : (codeText || s.error || "");
+      return `<div class="${s.ok ? "ok" : "bad"}">${s.ok ? "✓" : "✗"} ${esc(t(`config.spStep.${s.step}`))}: ${esc(text)}</div>`;
     }).join("");
     toast(r.ok ? t("config.spTestOk") : t("config.spTestFailed"), !r.ok);
   } catch (e) {

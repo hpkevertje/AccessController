@@ -16,12 +16,15 @@ GRAPH = "https://graph.microsoft.com/v1.0"
 CHUNK = 320 * 1024 * 10     # 3,2 MB, een veelvoud van 320 KiB zoals Graph vereist
 MODERATION_LABELS = {0: "goedgekeurd", 1: "geweigerd", 2: "wacht op goedkeuring",
                      3: "concept", 4: "gepland"}
+MODERATION_CODES = {0: "approved", 1: "denied", 2: "pending", 3: "draft", 4: "scheduled"}
 
 log = logging.getLogger(__name__)
 
 
 class SharePointError(RuntimeError):
-    pass
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 def secret() -> str:
@@ -89,7 +92,8 @@ def _request(method: str, url: str, token: str | None = None, data: bytes | None
 
 def _token(tenant: str, client_id: str) -> str:
     if not secret():
-        raise SharePointError("SHAREPOINT_CLIENT_SECRET is niet ingesteld in de omgeving van de container.")
+        raise SharePointError("SHAREPOINT_CLIENT_SECRET is niet ingesteld in de omgeving van de container.",
+                              code="secret_missing")
     log.debug("SharePoint: token aanvragen voor tenant %s", tenant)
     r = _request("POST", f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
                  form={"client_id": client_id, "client_secret": secret(),
@@ -149,7 +153,8 @@ def _ensure_published(token: str, site: str, target: str, item: dict) -> dict:
         item = _item(token, site, target)
         item_id = item.get("id")
     if not item_id:
-        raise SharePointError("SharePoint gaf geen item-ID terug; kan het bestand niet inchecken.")
+        raise SharePointError("SharePoint gaf geen item-ID terug; kan het bestand niet inchecken.",
+                              code="no_item_id")
 
     log.info("SharePoint: %s staat uitgecheckt (concept); wordt ingecheckt als gepubliceerde versie", target)
     _request("POST", f"{GRAPH}/sites/{site}/drive/items/{item_id}/checkin", token,
@@ -159,14 +164,14 @@ def _ensure_published(token: str, site: str, target: str, item: dict) -> dict:
     if (item.get("publication") or {}).get("level") == "checkout":
         raise SharePointError(
             "Bestand is geüpload maar blijft uitgecheckt. Zet in de SharePoint-bibliotheek "
-            "'Vereist uitchecken' uit, of keur het bestand goed.")
+            "'Vereist uitchecken' uit, of keur het bestand goed.", code="still_checked_out")
     return item
 
 
-def _upload(cfg: dict, filename: str, content: bytes) -> dict:
+def _upload(cfg: dict, filename: str, content: bytes, verify_visibility: bool = True) -> dict:
     """Uploadt een bestand en geeft de metadata van het resulterende item terug."""
     if not content:
-        raise SharePointError("Leeg bestand kan niet naar SharePoint geüpload worden.")
+        raise SharePointError("Leeg bestand kan niet naar SharePoint geüpload worden.", code="empty_file")
     token = _token(cfg["tenant_id"], cfg["client_id"])
     site = _site_id(token, cfg["site_url"])
     target = f"{cfg['folder']}/{filename}" if cfg["folder"] else filename
@@ -177,7 +182,8 @@ def _upload(cfg: dict, filename: str, content: bytes) -> dict:
                        headers={"Content-Type": "application/json"})
     upload_url = session.get("uploadUrl")
     if not upload_url:
-        raise SharePointError("SharePoint gaf geen upload-URL terug voor het uploaden.")
+        raise SharePointError("SharePoint gaf geen upload-URL terug voor het uploaden.",
+                              code="no_upload_url")
 
     total = len(content)
     result = {}
@@ -191,7 +197,8 @@ def _upload(cfg: dict, filename: str, content: bytes) -> dict:
                                    "Content-Length": str(len(part)),
                                    "Content-Range": f"bytes {start}-{end}/{total}"})
     if result.get("nextExpectedRanges"):
-        raise SharePointError(f"SharePoint verwacht nog gegevens na de upload: {result['nextExpectedRanges']}")
+        raise SharePointError(f"SharePoint verwacht nog gegevens na de upload: {result['nextExpectedRanges']}",
+                              code="incomplete_upload")
 
     # Controleer dat het bestand echt bestaat en de juiste grootte heeft. Zo wordt een
     # upload die wel 201 teruggeeft maar toch niet zichtbaar is, meteen opgemerkt.
@@ -204,10 +211,13 @@ def _upload(cfg: dict, filename: str, content: bytes) -> dict:
             return result
     if item.get("size") not in (None, total):
         raise SharePointError(
-            f"SharePoint meldt {item.get('size')} bytes, maar het bestand is {total} bytes.")
+            f"SharePoint meldt {item.get('size')} bytes, maar het bestand is {total} bytes.",
+            code="size_mismatch")
     if not item.get("webUrl") and result.get("webUrl"):
         item["webUrl"] = result["webUrl"]
     item = _ensure_published(token, site, target, item)
+    if not verify_visibility:
+        return item
 
     # In een bibliotheek met contentgoedkeuring blijft een geüpload bestand 'wacht op
     # goedkeuring' staan en is het voor gebruikers onzichtbaar. Dat mag geen stille
@@ -221,7 +231,7 @@ def _upload(cfg: dict, filename: str, content: bytes) -> dict:
         raise SharePointError(
             "Bestand is geüpload, maar is niet zichtbaar in SharePoint: "
             f"goedkeuringsstatus '{MODERATION_LABELS[moderation]}'. Keur het bestand goed "
-            "of zet contentgoedkeuring uit in de bibliotheek.")
+            "of zet contentgoedkeuring uit in de bibliotheek.", code="not_visible")
     return item
 
 
@@ -261,109 +271,104 @@ def cleanup(cfg: dict, prefix: str, retention_days: int) -> int:
 def diagnose(cfg: dict) -> dict:
     """Test de SharePoint-instellingen stap voor stap met een klein testbestand.
 
-    Geeft per stap terug of ze geslaagd is en wat het resultaat was. Zo is in de UI
-    zichtbaar waar het misgaat (secret, token, site, map, upload, publicatie).
+    De UI vertaalt de stabiele stapnamen en gestructureerde details, zodat de uitslag
+    in de gekozen taal verschijnt. Geeft per stap terug of ze geslaagd is.
     """
     steps: list[dict] = []
     state: dict = {}
 
-    def step(name: str, fn):
+    def step(name: str, fn) -> bool:
         try:
-            detail = fn()
-            steps.append({"step": name, "ok": True, "detail": detail})
-            return detail
+            result = fn()
+            if isinstance(result, tuple):
+                ok, detail = result
+            else:
+                ok, detail = True, result
         except Exception as e:  # noqa: BLE001 - elke stap moet apart gerapporteerd worden
             log.warning("SharePoint-diagnose '%s' mislukt: %s", name, e)
-            steps.append({"step": name, "ok": False, "error": str(e)})
-            return None
+            steps.append({"step": name, "ok": False, "error": str(e),
+                          "error_code": getattr(e, "code", None)})
+            return False
+        steps.append({"step": name, "ok": ok, "detail": detail})
+        return ok
 
     def check_config():
         missing = [k for k in ("tenant_id", "client_id", "site_url") if not str(cfg.get(k, "")).strip()]
-        if missing:
-            raise SharePointError("Ontbrekende instellingen: " + ", ".join(missing))
-        return "tenant-ID, client-ID en site-URL zijn ingevuld"
+        return (not missing), {"missing": missing}
 
     def check_secret():
-        if not secret():
-            raise SharePointError("SHAREPOINT_CLIENT_SECRET is niet ingesteld.")
-        return "client secret is aanwezig"
+        present = bool(secret())
+        return present, {"set": present}
 
     def check_token():
         state["token"] = _token(cfg["tenant_id"], cfg["client_id"])
-        return "toegangstoken ontvangen"
+        return {}
 
     def check_site():
-        if not state.get("token"):
-            raise SharePointError("Overgeslagen: geen toegangstoken.")
         state["site"] = _site_id(state["token"], cfg["site_url"])
-        return f"site gevonden ({state['site']})"
+        return {"id": state["site"]}
 
     def check_drive():
-        if not state.get("site"):
-            raise SharePointError("Overgeslagen: site is niet gevonden.")
         drive = _request("GET", f"{GRAPH}/sites/{state['site']}/drive?$select=id,name,webUrl", state["token"])
         state["drive"] = drive.get("id")
-        return f"documentbibliotheek '{drive.get('name')}' ({drive.get('webUrl', '')})"
+        return {"name": drive.get("name", ""), "url": drive.get("webUrl", "")}
 
     def check_folder():
-        if not state.get("site"):
-            raise SharePointError("Overgeslagen: site is niet gevonden.")
         folder = cfg.get("folder", "")
         if not folder:
-            return "lege map: het bestand wordt in de hoofdmap gezet"
+            return {"folder": "", "root": True}
         url = f"{GRAPH}/sites/{state['site']}/drive/root:/{_q(folder)}:/children?$top=1&$select=id,name"
         try:
             page = _request("GET", url, state["token"])
         except SharePointError as e:
             if "HTTP 404" in str(e):
-                return f"map '{folder}' bestaat nog niet (wordt bij de upload aangemaakt)"
+                return {"folder": folder, "exists": False}
             raise
-        return f"map '{folder}' gevonden ({len(page.get('value', []))} item(s) op de eerste pagina)"
+        return {"folder": folder, "exists": True, "count": len(page.get("value", []))}
 
     def check_upload():
-        if not state.get("site"):
-            raise SharePointError("Overgeslagen: site is niet gevonden.")
         name = f"accesscontrol-diagnose-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.db.gz"
         content = b"AccessController SharePoint diagnostic\n" * 64
-        state["item"] = _upload(cfg, name, content)
+        # De zichtbaarheid wordt in de aparte publicatiestap gecontroleerd.
+        state["item"] = _upload(cfg, name, content, verify_visibility=False)
         state["item_name"] = name
-        state["item_size"] = len(content)
         return {"file": name, "bytes": len(content), "url": state["item"].get("webUrl", "")}
 
     def check_publication():
-        item = state.get("item")
-        if not item:
-            raise SharePointError("Overgeslagen: testbestand is niet geüpload.")
-        publication = item.get("publication") or {}
-        result = {"level": publication.get("level") or "geen publicatiegegevens"}
+        item = state["item"]
+        level = (item.get("publication") or {}).get("level") or "none"
         target = f"{cfg['folder']}/{state['item_name']}" if cfg.get("folder") else state["item_name"]
+        detail = {"level": level, "moderation": None}
         try:
             status = _moderation_status(state["token"], state["site"], target)
             if status is not None:
-                result["moderation"] = MODERATION_LABELS.get(status, str(status))
+                detail["moderation"] = MODERATION_CODES.get(status, str(status))
         except SharePointError as e:
-            result["moderation"] = f"niet op te vragen: {e}"
-        if result.get("moderation") in ("geweigerd", "wacht op goedkeuring", "concept", "gepland"):
-            raise SharePointError(
-                "Bestand is geüpload, maar niet zichtbaar: goedkeuringsstatus is "
-                f"'{result['moderation']}'. Keur het bestand goed of zet contentgoedkeuring "
-                "uit in de bibliotheek.")
-        return result
+            detail["moderation_error"] = str(e)
+        visible = level != "checkout" and detail["moderation"] not in (
+            "denied", "pending", "draft", "scheduled")
+        return visible, detail
 
     def check_delete():
-        item = state.get("item") or {}
+        item = state["item"]
         if not item.get("id"):
-            return "testbestand kon niet verwijderd worden (geen item-ID)"
+            return {"deleted": False}
         _request("DELETE", f"{GRAPH}/sites/{state['site']}/drive/items/{item['id']}", state["token"])
-        return "testbestand verwijderd"
+        return {"deleted": True}
 
-    if step("configuratie", check_config) and step("client secret", check_secret):
-        step("toegangstoken", check_token)
-        step("site", check_site)
-        step("documentbibliotheek", check_drive)
-        step("map", check_folder)
+    ok = step("config", check_config)
+    if ok:
+        ok = step("secret", check_secret)
+    if ok:
+        ok = step("token", check_token)
+    if ok:
+        ok = step("site", check_site)
+    if ok:
+        ok = step("drive", check_drive)
+    if ok:
+        step("folder", check_folder)
         if step("upload", check_upload):
-            step("publicatie", check_publication)
-            step("opruimen", check_delete)
+            step("publication", check_publication)
+            step("cleanup", check_delete)
 
     return {"ok": all(s["ok"] for s in steps), "steps": steps}

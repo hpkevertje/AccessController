@@ -385,8 +385,10 @@ def test_sharepoint_diagnose_reports_each_step(tmp_path, monkeypatch):
     result = sharepoint.diagnose(_sp_cfg(tmp_path)["backup"]["sharepoint"])
     assert result["ok"]
     names = [s["step"] for s in result["steps"]]
-    assert names == ["configuratie", "client secret", "toegangstoken", "site",
-                     "documentbibliotheek", "map", "upload", "publicatie", "opruimen"]
+    assert names == ["config", "secret", "token", "site", "drive",
+                     "folder", "upload", "publication", "cleanup"]
+    assert result["steps"][1]["detail"] == {"set": True}
+    assert result["steps"][7]["detail"]["moderation"] == "approved"
     assert any(m == "DELETE" and u.endswith("/items/FILE") for m, u in calls)
 
 
