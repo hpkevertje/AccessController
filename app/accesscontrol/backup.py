@@ -66,23 +66,29 @@ def run(cfg: dict, actor: str = "systeem", automatic: bool = False) -> dict:
     b = cfg["backup"]
     sp = b["sharepoint"]
     name, data = make()
+    log.info("Back-up starten: %s (%d bytes)", name, len(data))
     result = {"ts": db.now_iso(), "file": name, "size": len(data), "automatic": automatic,
               "local": None, "sharepoint": None}
     errors = []
     try:
         path, removed = _write_local(b["folder"], name, data, b["retention_days"])
         result["local"] = {"ok": True, "path": path, "removed": removed}
+        log.info("Back-up lokaal opgeslagen: %s (%d oude verwijderd)", path, removed)
     except OSError as e:
         result["local"] = {"ok": False, "error": str(e)}
         errors.append(f"Map {b['folder']}: {e}")
+        log.warning("Back-up lokaal mislukt (%s): %s", b["folder"], e, exc_info=True)
     if sp["enabled"]:
+        log.info("Back-up naar SharePoint: site %s, map %s", sp.get("site_url", ""), sp.get("folder", ""))
         try:
             url = sharepoint.upload(sp, name, data)
+            log.info("Back-up op SharePoint geüpload: %s", url or "(geen web-URL)")
             removed = sharepoint.cleanup(sp, PREFIX, sp["retention_days"])
             result["sharepoint"] = {"ok": True, "url": url, "removed": removed}
         except Exception as e:  # noqa: BLE001
             result["sharepoint"] = {"ok": False, "error": str(e)}
             errors.append(f"SharePoint: {e}")
+            log.warning("Back-up naar SharePoint mislukt: %s", e, exc_info=True)
     result["ok"] = not errors
     st = status()
     st["last"] = result
@@ -92,6 +98,8 @@ def run(cfg: dict, actor: str = "systeem", automatic: bool = False) -> dict:
         st["last_ok"] = result["ts"]
     _save_status(st)
     where = ", ".join(w for w, r in (("map", result["local"]), ("SharePoint", result["sharepoint"])) if r and r["ok"])
+    log.info("Back-up %s (naar %s)%s", "geslaagd" if result["ok"] else "met fouten",
+             where or "niets", "" if result["ok"] else ": " + " | ".join(errors))
     db.log_event("systeem" if automatic else "admin", actor=None if automatic else actor,
                  result="ok" if result["ok"] else "fout",
                  reason=("Automatische back-up" if automatic else "Back-up gemaakt") +

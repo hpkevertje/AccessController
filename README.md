@@ -228,6 +228,23 @@ Onder Configuratie > Automatische back-up:
 5. In de webapp: vink "Ook naar SharePoint" aan en vul tenant-ID, client-ID, site-URL
    (bv. `https://bedrijf.sharepoint.com/sites/IT`), de map in de documentbibliotheek en de bewaartermijn in.
 6. Klik **Nu back-up maken** om te testen. Een fout (bv. ontbrekende rechten) staat in de back-upstatus.
+7. Met **SharePoint testen** (na opslaan) loopt de app de hele keten apart na: configuratie,
+   client secret, toegangstoken, site, documentbibliotheek, map, upload, publicatie en opruimen.
+   Het resultaat staat meteen onder de knop en in het logboek.
+
+**Bestand niet zichtbaar in SharePoint?** De upload kan geslaagd zijn (HTTP 201) terwijl het
+bestand voor gebruikers verborgen blijft:
+
+- Staat in de bibliotheek **Vereist uitchecken** of **versiebeheer met concepten** aan? De app
+  checkt een uitgecheckt bestand na de upload automatisch in als gepubliceerde versie. Lukt dat
+  niet, dan meldt de back-upstatus dat expliciet.
+- Staat **contentgoedkeuring** aan? Dan blijft het bestand op *wacht op goedkeuring* staan tot
+  iemand het goedkeurt. De diagnose noemt deze status.
+- Controleer ook of je in de juiste documentbibliotheek kijkt: de app gebruikt de
+  standaardbibliotheek van de site (`drive/root`) en de map uit de configuratie.
+
+Zet voor meer details `LOG_LEVEL=DEBUG` in de stack-variabelen; de app logt dan elke
+Graph-aanroep, elk uploadfragment en de publicatiestatus in `docker compose logs -f app`.
 
 ## Status in de webapp
 

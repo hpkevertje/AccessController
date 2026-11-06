@@ -490,6 +490,25 @@ function renderBackupStatus(bk) {
     + (bk.last_ok && bk.last_ok !== l.ts ? `<div class="muted">${esc(t("config.lastSuccess", { time: fmtTime(bk.last_ok) }))}</div>` : "");
 }
 
+$("#sp-test").addEventListener("click", async () => {
+  const btn = $("#sp-test");
+  const out = $("#sp-test-result");
+  btn.disabled = true;
+  out.textContent = t("config.spTestBusy");
+  try {
+    const r = await api("api/backup/sharepoint/test", { method: "POST", body: {} });
+    out.innerHTML = r.steps.map((s) => {
+      const detail = s.ok ? s.detail : s.error;
+      const text = typeof detail === "string" ? detail : JSON.stringify(detail);
+      return `<div class="${s.ok ? "ok" : "bad"}">${s.ok ? "✓" : "✗"} ${esc(s.step)}: ${esc(text ?? "")}</div>`;
+    }).join("");
+    toast(r.ok ? t("config.spTestOk") : t("config.spTestFailed"), !r.ok);
+  } catch (e) {
+    out.innerHTML = `<div class="bad">${esc(e.message)}</div>`;
+    toast(e.message, true);
+  } finally { btn.disabled = false; }
+});
+
 $("#cfg-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const body = {};

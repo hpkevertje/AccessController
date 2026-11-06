@@ -226,6 +226,7 @@ def test_restore_rejects_foreign_sqlite(tmp_path):
 
 def test_sharepoint_upload_and_cleanup(tmp_path, monkeypatch):
     calls = []
+    state = {"total": 0, "level": "checkout"}
 
     def fake(method, url, token=None, data=None, headers=None, form=None):
         calls.append((method, url, headers))
@@ -238,11 +239,23 @@ def test_sharepoint_upload_and_cleanup(tmp_path, monkeypatch):
             return {"uploadUrl": "https://upload.example/abc"}
         if url == "https://upload.example/abc":
             assert "Authorization" not in (headers or {})
-            return {"webUrl": "https://contoso.sharepoint.com/x"}
+            start, rest = headers["Content-Range"].split(" ")[1].split("-")
+            state["total"] = int(rest.split("/")[1])
+            return {"id": "FILE", "name": "x", "size": state["total"],
+                    "webUrl": "https://contoso.sharepoint.com/x",
+                    "publication": {"level": state["level"]}}
+        if url.endswith("/checkin"):
+            assert json.loads(data)["checkInAs"] == "published"
+            state["level"] = "published"
+            return {}
         if "/children" in url:
             return {"value": [
                 {"id": "1", "name": "accesscontrol-20200101-000000.db.gz", "createdDateTime": "2020-01-01T00:00:00Z"},
                 {"id": "2", "name": "andere.docx", "createdDateTime": "2020-01-01T00:00:00Z"}]}
+        if "/drive/root:/" in url:
+            return {"id": "FILE", "name": "x", "size": state["total"],
+                    "webUrl": "https://contoso.sharepoint.com/x",
+                    "publication": {"level": state["level"]}}
         if method == "DELETE":
             return {}
         raise AssertionError(url)
@@ -256,6 +269,125 @@ def test_sharepoint_upload_and_cleanup(tmp_path, monkeypatch):
     deletes = [u for m, u, _ in calls if m == "DELETE"]
     assert deletes == ["https://graph.microsoft.com/v1.0/sites/SITE/drive/items/1"]
     assert any("root:/Back-ups/AC/accesscontrol-" in u for _, u, _ in calls)
+    assert any(u.endswith("/items/FILE/checkin") for m, u, _ in calls if m == "POST")
+    assert state["level"] == "published"
+
+
+def _sp_cfg(tmp_path):
+    return cfg_with(tmp_path, enabled=True, tenant_id="t", client_id="c",
+                    site_url="https://contoso.sharepoint.com/sites/IT", folder="Back-ups/AC")
+
+
+def _sp_base(method, url, state):
+    """Minimale Graph-simulatie voor uploadtests; geeft None als de URL niet bekend is."""
+    if "oauth2" in url:
+        return {"access_token": "T"}
+    if url.startswith("https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/IT"):
+        return {"id": "SITE"}
+    if url.endswith("createUploadSession"):
+        return {"uploadUrl": "https://upload.example/abc"}
+    if url == "https://upload.example/abc":
+        start, rest = state["headers"]["Content-Range"].split(" ")[1].split("-")
+        state["total"] = int(rest.split("/")[1])
+        return {"id": "FILE", "size": state["total"], "webUrl": "https://x/y"}
+    if "/children" in url:
+        return {"value": []}
+    if "/drive/root:/" in url:
+        return {"id": "FILE", "size": state.get("reported_size", state["total"]),
+                "webUrl": "https://x/y", "publication": {"level": state["level"]}}
+    if method == "DELETE":
+        return {}
+    return None
+
+
+def test_sharepoint_upload_verifies_size(tmp_path, monkeypatch):
+    state = {"total": 0, "level": "published", "reported_size": 1}
+
+    def fake(method, url, token=None, data=None, headers=None, form=None):
+        state["headers"] = headers or {}
+        result = _sp_base(method, url, state)
+        if result is None:
+            raise AssertionError(url)
+        return result
+
+    monkeypatch.setenv("SHAREPOINT_CLIENT_SECRET", "geheim")
+    monkeypatch.setattr(sharepoint, "_request", fake)
+    r = backup.run(_sp_cfg(tmp_path), actor="a")
+    assert not r["ok"] and not r["sharepoint"]["ok"]
+    assert "bytes" in r["sharepoint"]["error"]
+
+
+def test_sharepoint_upload_that_stays_checked_out_is_an_error(tmp_path, monkeypatch):
+    state = {"total": 0, "level": "checkout"}
+
+    def fake(method, url, token=None, data=None, headers=None, form=None):
+        state["headers"] = headers or {}
+        if url.endswith("/checkin"):
+            return {}                      # check-in lukt niet / blijft concept
+        result = _sp_base(method, url, state)
+        if result is None:
+            raise AssertionError(url)
+        return result
+
+    monkeypatch.setenv("SHAREPOINT_CLIENT_SECRET", "geheim")
+    monkeypatch.setattr(sharepoint, "_request", fake)
+    r = backup.run(_sp_cfg(tmp_path), actor="a")
+    assert not r["ok"] and "uitgecheckt" in r["sharepoint"]["error"]
+
+
+def test_sharepoint_upload_pending_approval_is_reported(tmp_path, monkeypatch):
+    state = {"total": 0, "level": "published", "headers": {}}
+
+    def fake(method, url, token=None, data=None, headers=None, form=None):
+        if "/listItem" in url:
+            return {"fields": {"_ModerationStatus": 2}}
+        state["headers"] = headers or {}
+        result = _sp_base(method, url, state)
+        if result is None:
+            raise AssertionError(url)
+        return result
+
+    monkeypatch.setenv("SHAREPOINT_CLIENT_SECRET", "geheim")
+    monkeypatch.setattr(sharepoint, "_request", fake)
+    r = backup.run(_sp_cfg(tmp_path), actor="a")
+    assert not r["ok"] and "goedkeuring" in r["sharepoint"]["error"]
+
+
+def test_sharepoint_diagnose_reports_each_step(tmp_path, monkeypatch):
+    calls = []
+
+    def fake(method, url, token=None, data=None, headers=None, form=None):
+        calls.append((method, url))
+        if "oauth2" in url:
+            return {"access_token": "T"}
+        if url.startswith("https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/IT"):
+            return {"id": "SITE"}
+        if "/drive?$select=" in url:
+            return {"id": "DRIVE", "name": "Documents", "webUrl": "https://contoso.sharepoint.com/Shared Documents"}
+        if "/children" in url:
+            return {"value": []}
+        if url.endswith("createUploadSession"):
+            return {"uploadUrl": "https://upload.example/abc"}
+        if url == "https://upload.example/abc":
+            start, rest = headers["Content-Range"].split(" ")[1].split("-")
+            return {"id": "FILE", "size": int(rest.split("/")[1]), "webUrl": "https://x/diagnose"}
+        if "/listItem" in url:
+            return {"fields": {"_ModerationStatus": 0}}
+        if "/drive/root:/" in url:
+            return {"id": "FILE", "size": 2496, "webUrl": "https://x/diagnose",
+                    "publication": {"level": "published"}}
+        if method == "DELETE":
+            return {}
+        raise AssertionError(url)
+
+    monkeypatch.setenv("SHAREPOINT_CLIENT_SECRET", "geheim")
+    monkeypatch.setattr(sharepoint, "_request", fake)
+    result = sharepoint.diagnose(_sp_cfg(tmp_path)["backup"]["sharepoint"])
+    assert result["ok"]
+    names = [s["step"] for s in result["steps"]]
+    assert names == ["configuratie", "client secret", "toegangstoken", "site",
+                     "documentbibliotheek", "map", "upload", "publicatie", "opruimen"]
+    assert any(m == "DELETE" and u.endswith("/items/FILE") for m, u in calls)
 
 
 def test_sharepoint_without_secret_fails_cleanly(tmp_path, monkeypatch):

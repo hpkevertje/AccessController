@@ -165,3 +165,6 @@ fieldset.grant { display: grid; gap: 6px; grid-template-columns: 1fr; padding: 1
 #dev-table td, #dev-table th { white-space: nowrap; }
 #bk-status { font-size: 13px; }
 #bk-status .bad { color: var(--bad); }
+#sp-test-result { font-size: 13px; overflow-wrap: anywhere; }
+#sp-test-result .ok { color: var(--ok); }
+#sp-test-result .bad { color: var(--bad); }

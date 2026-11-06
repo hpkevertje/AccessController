@@ -145,6 +145,11 @@
         <label><span data-i18n="config.spFolder">Map in de documentbibliotheek</span> <input name="backup.sharepoint.folder" placeholder="AccessController"></label>
         <label><span data-i18n="config.spKeep">Bewaren op SharePoint (dagen)</span> <input name="backup.sharepoint.retention_days" type="number" min="1" max="3650"></label>
         <p id="sp-secret" class="muted full"></p>
+        <div class="form-actions full">
+          <button id="sp-test" type="button" data-i18n="config.spTest">SharePoint testen</button>
+          <span class="muted" data-i18n="config.spTestHint">Eerst opslaan, dan de verbinding en schrijfrechten testen met een klein testbestand.</span>
+        </div>
+        <div id="sp-test-result" class="full"></div>
       </fieldset>
       <div class="form-actions">
         <button type="submit" class="primary" data-i18n="common.save">Opslaan</button>
