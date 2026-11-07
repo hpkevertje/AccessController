@@ -19,7 +19,7 @@ import re
 import openpyxl
 
 from . import db, members
-from .phone import PhoneError, normalize
+from .phone import PhoneError, is_mobile, normalize
 
 SOURCE = "ecaptain"
 
@@ -173,20 +173,29 @@ def _split_phone_cell(v) -> list[str]:
     return [x.strip() for x in re.split(r"\s+/\s+|[;,\n\r|]+", s) if x.strip()]
 
 
-def _pick_phone(row: list, cols: dict, region: str) -> tuple[str | None, bool]:
-    """Mobiel eerst, dan vast. Geeft (E.164 of None, ongeldig?) terug."""
+def _pick_phone(row: list, cols: dict, region: str) -> tuple[str | None, str | None]:
+    """Geeft (mobiel E.164 of None, reden) terug. Alleen mobiele nummers zijn toegelaten.
+
+    reden is None bij succes, anders "empty", "invalid" of "not_mobile".
+    """
     raws: list[str] = []
     for kind in ("mobile", "phone"):
         for i in cols.get(kind, []):
             raws.extend(_split_phone_cell(row[i] if i < len(row) else ""))
+    if not raws:
+        return None, "empty"
+    saw_valid = False
     for raw in raws:
         try:
             phone = normalize(raw, region)
         except PhoneError:
             continue
-        if phone:
-            return phone, False
-    return None, bool(raws)
+        if not phone:
+            continue
+        saw_valid = True
+        if is_mobile(phone, region):
+            return phone, None
+    return None, ("not_mobile" if saw_valid else "invalid")
 
 
 def _parse_active(v) -> tuple[bool, bool]:
@@ -224,7 +233,7 @@ def parse_report(filename: str, content: bytes, region: str) -> tuple[list[dict]
             continue
         external_id = _cell(row, cols.get("external_id")) or None
         member_no = _cell(row, cols.get("member_no"))
-        phone, phone_invalid = _pick_phone(row, cols, region)
+        phone, phone_issue = _pick_phone(row, cols, region)
         name = _cell(row, cols.get("name"))
         if not name:
             name = " ".join(x for x in (_cell(row, cols.get("first")),
@@ -233,26 +242,33 @@ def parse_report(filename: str, content: bytes, region: str) -> tuple[list[dict]
             member_no = external_id
         if not member_no and phone:
             member_no = phone.lstrip("+")
+        if not name:
+            name = member_no
+        if phone_issue:
+            label = name or member_no or f"rij {idx}"
+            reason = {"invalid": "geen geldig telefoonnummer",
+                      "not_mobile": "geen mobiel nummer",
+                      "empty": "geen telefoonnummer"}[phone_issue]
+            warnings.append(f"Rij {idx} ({label}): {reason}; alleen mobiele nummers worden "
+                            "geïmporteerd.")
         if not member_no and not phone:
-            warnings.append(f"Rij {idx}: geen lidnummer en geen telefoonnummer; overgeslagen.")
+            warnings.append(f"Rij {idx}: geen lidnummer en geen mobiel nummer; overgeslagen.")
             continue
         if not name and not phone:
             # Bv. een totalregel onderaan het rapport ("85" in de eerste kolom).
-            warnings.append(f"Rij {idx}: geen naam en geen telefoonnummer; overgeslagen.")
+            warnings.append(f"Rij {idx}: geen naam en geen mobiel nummer; overgeslagen.")
             continue
-        if not name:
-            name = member_no
 
         active_raw = _cell(row, cols.get("active"))
         active, known = _parse_active(active_raw)
         if active_raw and not known:
             warnings.append(f"Rij {idx}: onbekende status {active_raw!r}; als actief behandeld.")
-        if phone_invalid:
-            warnings.append(f"Rij {idx} ({name}): geen geldig telefoonnummer; een bestaand "
-                            "nummer blijft behouden.")
 
+        # Alleen een echt mobiel nummer telt. Bij een ongeldig of leeg nummer blijft een
+        # bestaand nummer behouden; bij een vast nummer wordt het bestaande nummer gewist.
         record = {"external_id": external_id, "member_no": member_no, "name": name,
-                  "phone": phone, "phone_invalid": phone_invalid, "active": active}
+                  "phone": phone, "phone_invalid": phone_issue in ("invalid", "empty"),
+                  "active": active}
         key = external_id or member_no
         if key in seen:
             warnings.append(f"Rij {idx}: {key} komt dubbel voor; enkel de eerste rij wordt gebruikt.")
@@ -333,8 +349,9 @@ def _build_plan(rows: list[dict], current: list[dict]) -> tuple[list[dict], list
             target = by_no.get(row["member_no"])
         if target is None:
             continue
-        if not row["active"] and target.get("source") != SOURCE:
-            # Een niet-actieve rij mag een handmatig nummer niet overnemen of wijzigen.
+        if target.get("source") != SOURCE and (not row["active"] or not row.get("phone")):
+            # Een niet-actieve rij of een rij zonder mobiel nummer mag een handmatig
+            # nummer niet overnemen of wijzigen.
             continue
         if target["id"] in claimed:
             hard_skip.add(id(row))
@@ -506,6 +523,9 @@ def _build_plan(rows: list[dict], current: list[dict]) -> tuple[list[dict], list
             plan.append({"action": "update", "member": target, "row": row,
                          "desired": wanted, "changes": _changes(target, wanted)})
         elif row["active"]:
+            if not wanted["phone"]:
+                errors.append(f"{_row_label(row)} heeft geen mobiel nummer en is overgeslagen.")
+                continue
             plan.append({"action": "add", "member": None, "row": row,
                          "desired": wanted, "changes": []})
 

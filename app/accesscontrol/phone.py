@@ -36,3 +36,14 @@ def normalize(raw: str | None, region: str = DEFAULT_REGION) -> str | None:
     if not phonenumbers.is_possible_number(num):
         raise PhoneError(f"ongeldig telefoonnummer: {raw!r}")
     return phonenumbers.format_number(num, phonenumbers.PhoneNumberFormat.E164)
+
+
+def is_mobile(number: str | None, region: str = DEFAULT_REGION) -> bool:
+    """True als het (E.164) nummer een mobiel nummer is."""
+    if not number:
+        return False
+    try:
+        num = phonenumbers.parse(number, region)
+    except phonenumbers.NumberParseException:
+        return False
+    return phonenumbers.number_type(num) == phonenumbers.PhoneNumberType.MOBILE

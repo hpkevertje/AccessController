@@ -88,6 +88,48 @@ def test_parse_skips_footer_total_row():
     assert not warnings
 
 
+def test_parse_only_accepts_mobile_numbers():
+    rows, warnings = ecaptain.parse_report(
+        "x.csv",
+        b"Lidnummer;Naam;Mobiel;Telefoon\n"
+        b"1;An;0470123456;0323456789\n"
+        b"2;Bert;;052445582\n"
+        b"3;Cis;0495123456;\n",
+        "BE")
+    assert rows[0]["phone"] == "+32470123456"
+    assert rows[1]["phone"] is None
+    assert rows[2]["phone"] == "+32495123456"
+    assert any("geen mobiel nummer" in w for w in warnings)
+
+
+def test_sync_skips_new_member_without_mobile():
+    r = sync("Lidnr;Naam;Mobiel\n1;An;0470123456\n2;Bert;052445582\n")
+    assert r["nieuw"] == 1
+    assert r["overgeslagen"] == 1
+    assert "1" in by_no() and "2" not in by_no()
+    assert any("geen mobiel nummer" in w for w in r["waarschuwingen"])
+    assert any("heeft geen mobiel nummer" in x for x in r["fouten"])
+
+
+def test_existing_member_fixed_number_is_cleared():
+    sync("Lidnr;Naam;Mobiel\n1;An;0470123456\n")
+    assert by_no()["1"]["phone"] == "+32470123456"
+
+    r = sync("Lidnr;Naam;Mobiel\n1;An;052445582\n")
+    assert r["gewijzigd"] == 1
+    assert by_no()["1"]["phone"] is None
+    assert any("geen mobiel nummer" in w for w in r["waarschuwingen"])
+
+
+def test_manual_fixed_number_survives_fixed_report_row():
+    manual = members.create({"member_no": "L1", "name": "Leverancier",
+                             "phone": "052445582"}, "BE", "admin@x")
+    r = sync("Lidnr;Naam;Mobiel\nL1;Leverancier;052445582\n")
+    assert r["nieuw"] == 0
+    m = members.get(manual["id"])
+    assert m["phone"] == "+3252445582" and m["source"] == "manual"
+
+
 # ---------- sync ----------
 
 def test_sync_add_update_deactivate_and_reactivate_keeps_manual():
