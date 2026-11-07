@@ -51,6 +51,7 @@ function applyLanguage(lang, persist = true) {
   renderMemberHead();
   renderMembers();
   renderDeviceTable();
+  renderSyncInfo();
   if (!$("#tab-events").classList.contains("hidden")) loadEvents();
   if (!$("#tab-config").classList.contains("hidden")) loadConfig();
 }
@@ -269,6 +270,8 @@ function renderMembers() {
   let rows = membersData.filter((m) => {
     if (f === "nophone" && m.phone) return false;
     if (f === "noaccess" && Object.values(m.access).some(Boolean)) return false;
+    if (f === "inactive" && m.active !== false) return false;
+    if (f === "manual" && m.source !== "manual") return false;
     if (!q) return true;
     const hay = `${m.member_no} ${m.name} ${m.note} ${m.phone || ""}`.toLowerCase();
     if (hay.includes(q)) return true;
@@ -285,12 +288,21 @@ function renderMembers() {
     th.classList.toggle("desc", th.dataset.sort === sort.key && sort.dir === -1);
   });
   $("#m-count").textContent = t("members.count", { shown: rows.length, total: membersData.length });
-  const sw = (m, d) => `<label class="switch" title="${esc(t("members.accessTitle", { device: d.name }))}"><input type="checkbox" data-dev="${d.id}" data-id="${m.id}" ${m.access[d.id] ? "checked" : ""}><span></span></label>`;
+  const sw = (m, d) => {
+    const inactive = m.active === false;
+    const title = inactive ? t("members.inactiveHint") : t("members.accessTitle", { device: d.name });
+    return `<label class="switch" title="${esc(title)}"><input type="checkbox" data-dev="${d.id}" data-id="${m.id}" ${m.access[d.id] ? "checked" : ""} ${inactive ? "disabled" : ""}><span></span></label>`;
+  };
+  const sourceBadge = (m) => m.source === "ecaptain"
+    ? `<span class="badge" title="${esc(t("members.sourceEcTitle"))}">${esc(t("members.sourceEc"))}</span>`
+    : `<span class="badge" title="${esc(t("members.sourceManualTitle"))}">${esc(t("members.sourceManual"))}</span>`;
   const cols = 5 + devicesList.length;
-  $("#m-table tbody").innerHTML = rows.length ? rows.map((m) => `
-    <tr class="${Object.values(m.access).some(Boolean) ? "" : "inactive"}">
+  $("#m-table tbody").innerHTML = rows.length ? rows.map((m) => {
+    const inactive = m.active === false;
+    return `
+    <tr class="${inactive || !Object.values(m.access).some(Boolean) ? "inactive" : ""}">
       <td class="mono">${esc(m.member_no)}</td>
-      <td>${esc(m.name)}</td>
+      <td>${esc(m.name)} ${sourceBadge(m)} ${inactive ? badge(t("members.inactive"), "bad") : ""}</td>
       <td class="phone">${esc(m.phone || "")}</td>
       ${devicesList.map((d) => `<td class="c">${sw(m, d)}</td>`).join("")}
       <td class="note">${esc(m.note)}</td>
@@ -298,7 +310,8 @@ function renderMembers() {
         <button class="small" data-edit="${m.id}">${t("common.edit")}</button>
         <button class="small danger" data-del="${m.id}">${t("common.delete")}</button>
       </td>
-    </tr>`).join("") : `<tr><td colspan="${cols}" class="empty">${t("members.none")}</td></tr>`;
+    </tr>`;
+  }).join("") : `<tr><td colspan="${cols}" class="empty">${t("members.none")}</td></tr>`;
 }
 
 $("#m-search").addEventListener("input", renderMembers);
@@ -338,13 +351,22 @@ let editingId = null;
 function openMember(m) {
   editingId = m ? m.id : null;
   const f = $("#member-form");
+  const isEc = !!(m && m.source === "ecaptain");
+  const inactive = !!(m && m.active === false);
   $("#member-title").textContent = m ? t("members.titleEdit") : t("members.titleNew");
   f.member_no.value = m ? m.member_no : "";
+  f.member_no.readOnly = isEc;
+  f.member_no.title = isEc ? t("members.ecaptainLocked") : "";
   f.name.value = m ? m.name : "";
   f.phone.value = m ? m.phone || "" : "";
   f.note.value = m ? m.note : "";
+  const hints = [];
+  if (isEc) hints.push(t("members.ecaptainLocked"));
+  if (inactive) hints.push(t("members.inactiveHint"));
+  $("#member-hint").textContent = hints.join(" ");
+  $("#member-hint").classList.toggle("hidden", !hints.length);
   $("#member-access").innerHTML = devicesList.length
-    ? devicesList.map((d) => `<label class="check"><input type="checkbox" data-access="${d.id}" ${!m || m.access[d.id] ? "checked" : ""}> ${t("common.access")} ${esc(d.name)}</label>`).join("")
+    ? devicesList.map((d) => `<label class="check"><input type="checkbox" data-access="${d.id}" ${!m || m.access[d.id] ? "checked" : ""} ${inactive ? "disabled" : ""}> ${t("common.access")} ${esc(d.name)}</label>`).join("")
     : `<span class="muted">${t("devices.noDevices")}</span>`;
   $(".errors", f).innerHTML = "";
   $("#dlg-member").showModal();
@@ -369,12 +391,42 @@ $("#member-save").addEventListener("click", async (ev) => {
   }
 });
 
-/* Import */
-$("#m-import").addEventListener("click", () => {
+/* Import: één knop met keuze tussen e-captain (standaard) en native Excel */
+const importMenu = $("#m-import-menu");
+
+function setImportMenu(open) {
+  $("#m-import-dropdown").classList.toggle("hidden", !open);
+  $("#m-import-toggle").setAttribute("aria-expanded", open ? "true" : "false");
+}
+function closeImportMenu() { setImportMenu(false); }
+
+function openEcaptainSync() {
+  closeImportMenu();
+  $("#m-sync-file").value = "";
+  $("#m-sync-file").click();
+}
+
+function openNativeImport() {
+  closeImportMenu();
   $("#import-form").reset();
   $("#import-result").innerHTML = "";
   $("#dlg-import").showModal();
+}
+
+$("#m-import-main").addEventListener("click", openEcaptainSync);
+$("#m-import-ecaptain").addEventListener("click", openEcaptainSync);
+$("#m-import-native").addEventListener("click", openNativeImport);
+$("#m-import-toggle").addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  setImportMenu($("#m-import-dropdown").classList.contains("hidden"));
 });
+document.addEventListener("click", (ev) => {
+  if (!importMenu.contains(ev.target)) closeImportMenu();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeImportMenu();
+});
+
 $("#import-go").addEventListener("click", async (ev) => {
   ev.preventDefault();
   const input = $("#import-form").file;
@@ -390,6 +442,164 @@ $("#import-go").addEventListener("click", async (ev) => {
     $("#import-result").innerHTML = `<p class="errors">${esc(t("import.rejected"))}</p>
       <ul class="errors">${(e.errors.length ? e.errors : [e.message]).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
   } finally { $("#import-go").disabled = false; }
+});
+
+/* ---------------- Sync met e-captain ---------------- */
+let syncFile = null;
+let syncReportData = null;
+let ecaptainStatus = null;
+
+function renderSyncInfo() {
+  if (!ecaptainStatus) return;
+  const last = ecaptainStatus.last;
+  $("#m-import-main").title = last
+    ? t("members.syncLast", { time: fmtTime(last.ts), file: last.bestand || "" })
+    : t("members.syncNever");
+}
+
+async function loadEcaptainStatus() {
+  try {
+    ecaptainStatus = await api("api/ecaptain/status");
+    renderSyncInfo();
+  } catch { /* status is niet essentieel */ }
+}
+
+$("#m-sync-file").addEventListener("change", async () => {
+  const file = $("#m-sync-file").files[0];
+  if (!file) return;
+  syncFile = file;
+  $("#sync-result").innerHTML = `<p class="muted">${esc(t("members.syncReading"))}</p>`;
+  $("#sync-apply").disabled = true;
+  $("#sync-close").textContent = t("common.cancel");
+  $("#dlg-sync").showModal();
+  await syncPreview();
+});
+
+async function syncUpload(dryRun) {
+  const fd = new FormData();
+  fd.append("file", syncFile);
+  return api(`api/ecaptain/sync?dry_run=${dryRun ? "1" : "0"}`, { method: "POST", body: fd });
+}
+
+function syncLists(r) {
+  const list = (title, items, cls) => items && items.length
+    ? `<div class="${cls}"><b>${esc(title)}</b><ul>${items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`
+    : "";
+  return list(t("members.syncWarnings"), r.waarschuwingen, "muted")
+    + list(t("members.syncErrors"), r.fouten, "errors");
+}
+
+function syncCounts(r) {
+  const items = [
+    t("members.syncAdded", { count: r.nieuw }),
+    t("members.syncUpdated", { count: r.gewijzigd }),
+    t("members.syncDeactivated", { count: r.gedeactiveerd }),
+    t("members.syncReactivated", { count: r.geactiveerd }),
+    t("members.syncUnchanged", { count: r.ongewijzigd }),
+    t("members.syncSkipped", { count: r.overgeslagen }),
+  ];
+  return `<ul class="sync-counts">${items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+}
+
+function syncReportGroups(r) {
+  const rep = r.rapport || {};
+  const section = (title, items) => {
+    if (!items || !items.length) return "";
+    return `<details class="sync-report-group" ${items.length <= 5 ? "open" : ""}>
+      <summary>${esc(title)} (${items.length})</summary>
+      <ul class="sync-list">${items.map((it) => `<li><b>${esc(it.member_no)}</b> ${esc(it.name)}
+        <span class="mono muted">${esc(it.phone || "")}</span>
+        ${it.changes && it.changes.length ? `<div class="muted">${esc(it.changes.join("; "))}</div>` : ""}
+        ${it.reason ? `<div class="muted">${esc(it.reason)}</div>` : ""}</li>`).join("")}</ul>
+    </details>`;
+  };
+  return section(t("members.reportNew"), rep.nieuw)
+    + section(t("members.reportUpdated"), rep.gewijzigd)
+    + section(t("members.reportDeleted"), rep.verwijderd)
+    + section(t("members.reportReactivated"), rep.geactiveerd);
+}
+
+function csvCell(v) {
+  return `"${String(v ?? "").replace(/"/g, '""')}"`;
+}
+
+function syncCsv(r) {
+  const lines = [["Soort", "Lidnr", "Naam", "Telefoon", "Wijzigingen", "Reden"].map(csvCell).join(";")];
+  const add = (kind, items) => (items || []).forEach((it) => {
+    lines.push([kind, it.member_no, it.name, it.phone || "",
+      (it.changes || []).join("; "), it.reason || ""].map(csvCell).join(";"));
+  });
+  const rep = r.rapport || {};
+  add(t("members.reportNew"), rep.nieuw);
+  add(t("members.reportUpdated"), rep.gewijzigd);
+  add(t("members.reportDeleted"), rep.verwijderd);
+  add(t("members.reportReactivated"), rep.geactiveerd);
+  (r.fouten || []).forEach((x) => {
+    lines.push([t("members.reportSkipped"), "", "", "", "", x].map(csvCell).join(";"));
+  });
+  return "\ufeff" + lines.join("\r\n");
+}
+
+function setSyncReport(r) {
+  syncReportData = r;
+  $("#sync-download").disabled = !r;
+}
+
+async function syncPreview() {
+  try {
+    const r = await syncUpload(true);
+    const changes = r.nieuw + r.gewijzigd + r.gedeactiveerd + r.geactiveerd > 0;
+    setSyncReport(r);
+    $("#sync-result").innerHTML = `<p><b>${esc(t("members.syncPreview"))}</b></p>${syncCounts(r)}${syncReportGroups(r)}${syncLists(r)}`
+      + (changes ? "" : `<p class="muted">${esc(t("members.syncNoChanges"))}</p>`);
+    $("#sync-apply").disabled = !changes;
+  } catch (e) {
+    setSyncReport(null);
+    $("#sync-result").innerHTML = `<p class="errors">${esc(t("members.syncFailed"))}</p>
+      <ul class="errors">${(e.errors.length ? e.errors : [e.message]).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+  }
+}
+
+$("#sync-apply").addEventListener("click", async (ev) => {
+  ev.preventDefault();
+  if (!syncFile) return;
+  const btn = $("#sync-apply");
+  btn.disabled = true;
+  try {
+    const r = await syncUpload(false);
+    const done = t("members.syncDone", { added: r.nieuw, updated: r.gewijzigd,
+      deactivated: r.gedeactiveerd, reactivated: r.geactiveerd,
+      unchanged: r.ongewijzigd, skipped: r.overgeslagen });
+    setSyncReport(r);
+    $("#sync-result").innerHTML = `<p class="ok">${esc(done)}</p>${syncCounts(r)}${syncReportGroups(r)}${syncLists(r)}`;
+    $("#sync-close").textContent = t("import.close");
+    toast(done);
+    loadMembers();
+    loadEcaptainStatus();
+  } catch (e) {
+    $("#sync-result").innerHTML = `<p class="errors">${esc(t("members.syncFailed"))}</p>
+      <ul class="errors">${(e.errors.length ? e.errors : [e.message]).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+    btn.disabled = false;
+  }
+});
+
+$("#sync-download").addEventListener("click", () => {
+  if (!syncReportData) return;
+  const blob = new Blob([syncCsv(syncReportData)], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  a.href = URL.createObjectURL(blob);
+  a.download = `e-captain-import-${stamp}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+$("#dlg-sync").addEventListener("close", () => {
+  syncFile = null;
+  setSyncReport(null);
+  $("#m-sync-file").value = "";
+  $("#sync-result").innerHTML = "";
+  $("#sync-apply").disabled = true;
 });
 
 /* ---------------- Logboek ---------------- */
@@ -702,6 +912,7 @@ $("#bk-file").addEventListener("change", async () => {
   setInterval(loadStatus, 3000);
   await loadDevices();
   loadMembers();
+  loadEcaptainStatus();
   let tab = "members";
   try { tab = localStorage.getItem("tab") || "members"; } catch { /* geen opslag */ }
   showTab(["members", "events", "config"].includes(tab) ? tab : "members");

@@ -27,6 +27,15 @@ Shelly 1 Gen3). Je voegt toestellen toe in de webapp.
 - **Import/export** in Excel (.xlsx), in en uit hetzelfde formaat, met een kolom
   "Toegang &lt;toestel&gt;" per toestel. Import werkt bij op lidnr. Leden die niet in het bestand staan,
   blijven behouden. Bij één fout wordt het hele bestand geweigerd en verandert er niets.
+  De knop **Importeren** doet standaard **Importeren uit e-captain**; via het pijltje kies je
+  **Leden importeren (Excel)** voor het native formaat.
+- **Import uit e-captain**: de standaardactie van de knop **Importeren** onder Leden is
+  **Importeren uit e-captain**. De app leest een rapport/export uit e-Captain
+  (Ledenbeheer > Rapportage, .xlsx of .csv) met de actieve leden. Alleen e-Captain >
+  AccessController: lidnummer, naam en telefoon worden toegevoegd of bijgewerkt. Nummers die je
+  handmatig toevoegt (leveranciers, aannemers, ...) blijven staan. Een lid dat niet meer in het
+  rapport staat, blijft bewaard maar wordt niet-actief en kan niet meer bellen; de toegang per
+  toestel blijft bewaard voor als het lid terugkomt.
 - **SMS**: elke SMS die een RTU ontvangt (bv. een kredietwaarschuwing van de operator) komt in het
   logboek en de laatste staat op de toestelkaart. Nieuwe SMS verschijnen in een gele balk bovenaan
   (en als aantal in de tabtitel); "Bekijken" opent het logboek en markeert ze als gelezen voor alle admins.
@@ -54,6 +63,41 @@ Shelly 1 Gen3). Je voegt toestellen toe in de webapp.
 
 De relaismodule houdt zelf de tijd bij (Tasmota met PulseTime, Shelly met een timer). Valt de server
 of het netwerk weg, dan gaat het relais toch uit.
+
+## Import uit e-captain
+
+e-Captain heeft geen publieke API voor het uitlezen van leden. Daarom leest de app een
+**rapport/export** dat je in e-Captain maakt. Er gaan geen e-Captain-wachtwoorden naar de app en de
+app scrape't de webinterface niet.
+
+1. Ga in e-Captain naar **Ledenbeheer > Rapportage** en maak een rapport van de **actieve leden**
+   met minstens een telefoonnummer en een lidnummer, relatie-id of naam. Exporteer als **.xlsx** of
+   **.csv**.
+2. Klik onder **Leden** op **Importeren uit e-captain** (de standaardactie van de importknop) en
+   kies het bestand. De app toont eerst wat er zou veranderen; klik daarna op **Importeren**.
+   Na de import staat per lid in het resultaat wat **nieuw**, **gewijzigd** of
+   **verwijderd/niet actief** is. Met **Rapport downloaden (CSV)** bewaar je dat overzicht.
+3. De app werkt bestaande leden bij op **relatie-id** (indien aanwezig), anders op **lidnummer**,
+   en anders op **telefoonnummer**. Nieuwe actieve leden worden toegevoegd met toegang tot alle
+   toestellen, net als bij handmatig toevoegen.
+
+Herkende kolomkoppen (Nederlands en Engels, hoofdletters/leestekens maken niet uit):
+`Lidnr`/`Lidnummer`, `Relatie-id`, `Naam` of `Voornaam` + `Achternaam`, `Mobiel`/`GSM`/`Telefoon`,
+en optioneel `Actief`/`Status`. Van een lid met meerdere nummers wordt **eerst het mobiele nummer**
+gebruikt en pas daarna het vaste nummer. Een rapport zonder `Actief`-kolom wordt als volledig actief
+beschouwd; exporteer dan alleen de actieve leden.
+
+Wat de import wel en niet doet:
+
+- **Alleen e-Captain > AccessController.** AccessController stuurt niets terug.
+- **Handmatige nummers blijven staan.** Voeg leveranciers, aannemers of andere niet-leden toe met
+  **+ Nieuw lid / contact**; die krijgen `handmatig` als bron en worden nooit door de import
+  gewijzigd of verwijderd.
+- **Niet meer actief?** Een lid dat niet meer in het rapport staat (of daar niet actief is), blijft
+  bewaard maar wordt **niet-actief**: de oproep-engine weigert het nummer. De toegangsinstellingen
+  per toestel blijven bewaard, zodat het lid na terugkeer weer dezelfde toegang heeft.
+- **Geen tweerichtingsverkeer en geen automatische planning.** De import draait alleen wanneer je
+  **Importeren uit e-captain** kiest.
 
 ## Installatie (Linux)
 
