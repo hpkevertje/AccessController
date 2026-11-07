@@ -14,7 +14,7 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, backup, db, devices, members, settings, sharepoint
+from . import auth, backup, db, devices, ecaptain, members, settings, sharepoint
 from .engine import Engine
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -185,6 +185,34 @@ async def import_members(request: Request, file: UploadFile = File(...)):
         db.log_event("admin", actor=user(request), result="fout", reason="Import leden geweigerd",
                      detail=f"{file.filename}: {len(e.errors)} fout(en). " + " | ".join(e.errors[:20]))
         return _validation(e)
+
+
+# ---------- e-captain ----------
+
+@app.get("/api/ecaptain/status")
+def ecaptain_status():
+    return ecaptain.status()
+
+
+@app.post("/api/ecaptain/sync")
+async def ecaptain_sync(request: Request, file: UploadFile = File(...),
+                        dry_run: bool = Query(False, alias="dry_run")):
+    """Leest een e-Captain-rapport (.xlsx/.csv) en werkt de telefoonnummers bij.
+
+    Met dry_run=1 wordt alleen getoond wat er zou veranderen; er wordt niets opgeslagen.
+    """
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Bestand is groter dan 10 MB.")
+    try:
+        return await run_in_threadpool(ecaptain.sync_file, file.filename or "", content,
+                                       region(), user(request), dry_run)
+    except ecaptain.EcaptainError as e:
+        db.log_event("admin", actor=user(request), result="fout",
+                     reason="Import e-captain geweigerd",
+                     detail=f"{file.filename}: " + " | ".join(e.errors[:20]))
+        return JSONResponse({"detail": "Import geweigerd", "errors": e.errors},
+                            status_code=422)
 
 
 # ---------- logboek ----------

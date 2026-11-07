@@ -72,7 +72,9 @@ def _access_map(member_ids: list[int] | None = None) -> dict[int, set[int]]:
 
 
 def to_api(row: dict, access: set[int], devs: list[dict]) -> dict:
-    out = {k: row[k] for k in ("id", *FIELDS, "created_at", "updated_at")}
+    out = {k: row[k] for k in ("id", *FIELDS, "created_at", "updated_at",
+                               "source", "ecaptain_id", "ecaptain_synced_at", "active")}
+    out["active"] = bool(out["active"])
     out["access"] = {d["id"]: d["id"] in access for d in devs}
     return out
 

@@ -46,6 +46,28 @@ def test_sharepoint_test_endpoint(client, monkeypatch):
     assert db.query_one("SELECT result FROM events WHERE reason='SharePoint-test'")["result"] == "ok"
 
 
+def test_ecaptain_sync_api(client):
+    c, _ = client
+    csv = b"Lidnr;Naam;Mobiel\n1;An;0470123456\n"
+
+    r = c.post("/api/ecaptain/sync?dry_run=1", files={"file": ("e.csv", csv, "text/csv")})
+    assert r.status_code == 200 and r.json()["dry_run"] is True and r.json()["nieuw"] == 1
+    assert c.get("/api/members").json() == []
+
+    r = c.post("/api/ecaptain/sync", files={"file": ("e.csv", csv, "text/csv")})
+    assert r.status_code == 200 and r.json()["nieuw"] == 1
+    member = c.get("/api/members").json()[0]
+    assert member["source"] == "ecaptain" and member["active"] is True
+    assert c.get("/api/ecaptain/status").json()["last"]["nieuw"] == 1
+
+
+def test_ecaptain_sync_api_rejects_unknown_report(client):
+    c, _ = client
+    r = c.post("/api/ecaptain/sync",
+               files={"file": ("x.csv", b"Kleur;Aantal\nrood;3\n", "text/csv")})
+    assert r.status_code == 422 and r.json()["errors"]
+
+
 def test_devices_api_relay_type(client):
     c, _ = client
     r = c.post("/api/devices", json={"name": "Shelly", "enabled": False, "relay_type": "shelly",

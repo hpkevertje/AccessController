@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS members (
     name          TEXT NOT NULL,
     phone         TEXT UNIQUE,
     note          TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL DEFAULT 'manual',   -- manual | ecaptain
+    ecaptain_id   TEXT,                             -- relatie-id uit e-Captain (indien beschikbaar)
+    active        INTEGER NOT NULL DEFAULT 1,       -- 0 = niet (meer) actief in e-Captain
+    ecaptain_synced_at TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
@@ -212,6 +216,18 @@ def migrate() -> None:
         # Moet vóór de vroegtijdige return hieronder staan.
         if "relay_type" not in _columns("devices"):
             c.execute("ALTER TABLE devices ADD COLUMN relay_type TEXT NOT NULL DEFAULT 'tasmota'")
+        # Herkomst en status van leden (e-Captain-sync). Ook vóór de vroegtijdige return.
+        member_cols = _columns("members")
+        if "source" not in member_cols:
+            c.execute("ALTER TABLE members ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+        if "ecaptain_id" not in member_cols:
+            c.execute("ALTER TABLE members ADD COLUMN ecaptain_id TEXT")
+        if "active" not in member_cols:
+            c.execute("ALTER TABLE members ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+        if "ecaptain_synced_at" not in member_cols:
+            c.execute("ALTER TABLE members ADD COLUMN ecaptain_synced_at TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_members_ecaptain_id "
+                  "ON members(ecaptain_id) WHERE ecaptain_id IS NOT NULL")
         cols = _columns("members")
         if "access_water" not in cols:
             return

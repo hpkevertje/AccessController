@@ -572,6 +572,9 @@ class Engine:
         if member is None:
             db.log_event(source, result="geweigerd", reason="Onbekend nummer", **common)
             return "geweigerd"
+        if not member.get("active", True):
+            db.log_event(source, result="geweigerd", reason="Lid is niet actief", **common)
+            return "geweigerd"
         if not members.has_access(member, dev_id):
             db.log_event(source, result="geweigerd", reason="Geen toegang tot dit toestel", **common)
             return "geweigerd"
