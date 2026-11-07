@@ -83,13 +83,16 @@ app scrape't de webinterface niet.
 
 Herkende kolomkoppen (Nederlands en Engels, hoofdletters/leestekens maken niet uit):
 `Lidnr`/`Lidnummer`, `Relatie-id`, `Naam` of `Voornaam` + `Achternaam`, `Mobiel`/`GSM`/`Telefoon`,
-en optioneel `Actief`/`Status`. Van een lid met meerdere nummers wordt **eerst het mobiele nummer**
-gebruikt en pas daarna het vaste nummer. Een rapport zonder `Actief`-kolom wordt als volledig actief
-beschouwd; exporteer dan alleen de actieve leden.
+en optioneel `Actief`/`Status`. Alleen **mobiele nummers** worden geïmporteerd; een vast nummer
+wordt niet overgenomen. Bij een bestaand lid wordt een eerder vast nummer gewist. Een rapport
+zonder `Actief`-kolom wordt als volledig actief beschouwd; exporteer dan alleen de actieve leden.
 
 Wat de import wel en niet doet:
 
 - **Alleen e-Captain > AccessController.** AccessController stuurt niets terug.
+- **Alleen mobiele nummers.** De e-Captain-import neemt geen vaste nummers over. Handmatig
+  toegevoegde nummers (leveranciers, aannemers, ...) mogen wel vast zijn; die beperking geldt
+  alleen voor de import.
 - **Handmatige nummers blijven staan.** Voeg leveranciers, aannemers of andere niet-leden toe met
   **+ Nieuw lid / contact**; die krijgen `handmatig` als bron en worden nooit door de import
   gewijzigd of verwijderd.
